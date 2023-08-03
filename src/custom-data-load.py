@@ -3,7 +3,10 @@
 
 import os
 import pickle
+import sys
+import numpy as np
 import datasets
+import json
 
 _DESCRIPTION = """\
  A biomedical corpus containing Electronic Health Records (EHRs).
@@ -12,7 +15,12 @@ _CITATION = ""
 _HOMEPAGE = ""
 _LICENSE = ""
 _DATA_URL = ""
-
+_LABELS = ["O", "B-Clinical Drug", "B-Diagnostic Procedure", "B-Disease or Syndrome", "B-Finding",
+"B-Injury or Poisoning", "B-Mental Process", "B-Mental or Behavioral Dysfunction", "B-Pathologic Function",
+"B-Pharmacologic Substance", "B-Sign or Symptom", "B-Therapeutic or Preventive Procedure", "I-Clinical Drug",
+"I-Diagnostic Procedure", "I-Disease or Syndrome", "I-Finding", "I-Injury or Poisoning", "I-Mental Process",
+"I-Mental or Behavioral Dysfunction", "I-Pathologic Function", "I-Pharmacologic Substance", "I-Sign or Symptom",
+"I-Therapeutic or Preventive Procedure"]
 
 class EhrdataConfig(datasets.BuilderConfig):
     """BuilderConfig for GLUE."""
@@ -43,7 +51,7 @@ class Ehrdatatext(datasets.GeneratorBasedBuilder):
         EhrdataConfig(
             name="mimic-ii",
             data_url=_DATA_URL + "/" + "wikitext-103-v1.zip",
-            features=["text"],
+            features=["text", "tokens", "ner_tags"],
             description="Word level dataset. No processing is needed other than replacing newlines with <eos> tokens.",
         ),
     ]
@@ -56,7 +64,13 @@ class Ehrdatatext(datasets.GeneratorBasedBuilder):
             # datasets.features.FeatureConnectors
             features=datasets.Features(
                 {
-                    "text": datasets.Value("string")
+                    "text": datasets.Value("string"),
+                    "tokens": datasets.Sequence(datasets.Value("string")),
+                    "ner_tags": datasets.Sequence(
+                        datasets.features.ClassLabel(
+                            names=_LABELS
+                        )
+                    ),
                     # These are the features of your dataset like images, labels ...
                 }
             ),
@@ -86,21 +100,45 @@ class Ehrdatatext(datasets.GeneratorBasedBuilder):
     def _generate_examples(self, filepath):
         """Yields examples."""
         # TODO(wikitext): Yields (key, example) tuples from the dataset
-        with open(filepath, "rb") as f:
-            data = pickle.load(f)
-            for idx, doc in enumerate(data):
-                if doc:
-                    doc_text = [tok for d in doc['Sents'] for tok in d]
-                    doc_text = " ".join(doc_text)
-                    yield idx, {"text": doc_text}
-                else:
-                    yield idx, {"text": ""}
+        if filepath.endswith('.pkl'):
+            data = pickle.load(open(os.path.abspath(filepath), "rb"))
+        if filepath.endswith('.json'):
+            data = json.load(open(os.path.abspath(filepath), "r"))
 
+        for idx, doc in enumerate(data):
+            if doc:
+                doc_tokens = [tok for d in doc['Sents'] for tok in d]
+                doc_text = " ".join(doc_tokens)
+                doc_ner_tags = []
+                for s, sent in enumerate(doc['Sents']):
+                    sent_ents_tags = ["O" for _ in range(len(sent))]
+                    sent_ents = [ent for ent in doc['Entities'] if ent['sent_id'] == s]
+                    for ent in sent_ents:
+                        # linked_entities = tuple(sorted(ent['linked_umls_entities'].items(), key=lambda x:x[1]['score'], reverse=True))
+                        linked_entities = tuple(ent['linked_umls_entities'].items())
+                        try:
+                            tag = linked_entities[0][1]['type']
+                            start, end = ent['pos'][0], ent['pos'][1]
+                            ent_tags = [f"I-{tag}" for i in range(start, end)]
+                            ent_tags[0] = f"B-{tag}"
+                            if all(i in _LABELS for i in ent_tags):
+                                sent_ents_tags[start:end] = ent_tags
+                        except IndexError:
+                            pass
+                    doc_ner_tags.append(sent_ents_tags)
+                doc_ner_tags = [t for e in doc_ner_tags for t in e]
+                yield idx, {"text": doc_text, "tokens": doc_tokens, "ner_tags": doc_ner_tags}
+            else:
+                pass
+                yield idx, {"text": "", "tokens": [], "ner_tags": []}
 
-# with open('../data/dev.pkl', "rb") as f, open('../data/dev.txt', 'w') as g:
-#     data = pickle.load(f)
-#     for idx, doc in enumerate(data):
-#         if doc:
-#             doc_text = [tok for d in doc['Sents'] for tok in d]
-#             doc_text = " ".join(doc_text)
-#             g.write("{}\n".format(doc_text))
+        # if filepath.endswith('.pkl'):
+        #     with open(filepath, "rb") as f:
+        #         data = pickle.load(f)
+        #         for idx, doc in enumerate(data):
+        #             if doc:
+        #                 doc_tokens = [tok for d in doc['Sents'] for tok in d]
+        #                 doc_text = " ".join(doc_tokens)
+        #                 yield idx, {"text": doc_text, "tokens": doc_tokens}
+        #             else:
+        #                 yield idx, {"text": "", "tokens":doc_tokens}
