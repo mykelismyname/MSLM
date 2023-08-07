@@ -519,6 +519,7 @@ def main():
                 # We use this argument because the texts in our dataset are lists of words (with a label for each word).
                 is_split_into_words=True,
             )
+
             tokenized_inputs['labels'] = tokenized_inputs.input_ids.copy()
             labels = []
             for i, label in enumerate(examples[label_column_name]):
@@ -555,8 +556,7 @@ def main():
                 desc="Running tokenizer on every text in dataset",
             )
 
-        # Main data processing function that will concatenate all texts from our dataset and generate chunks of
-        # max_seq_length.
+        # Main data processing function that will concatenate all texts from our dataset and generate chunks of max_seq_length.
         def group_texts(examples):
             # Concatenate all texts.
             concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
