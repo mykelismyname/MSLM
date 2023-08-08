@@ -5,8 +5,10 @@ import sys
 import numpy as np
 import datasets
 import json
+import pandas as pd
 
-def create_ner_datasets(data_file):
+#create a dataset with BIO tags for each entity
+def create_ner_datasets(data_file, dest_file):
     with open(data_file, "r") as f, open(dest_file, "w") as d:
         data = json.load(f)
         for idx, doc in enumerate(data):
@@ -32,6 +34,7 @@ def create_ner_datasets(data_file):
                     d.write("\n")
                 d.write("\n---doc_end---\n")
 
+#create a file with a list of all B,I,O labels within the  dataset
 def create_ner_labels(file, use_dataset=False):
     labels_file = os.path.join(os.path.dirname(file), "labels.json")
     labels = []
@@ -77,8 +80,62 @@ def create_ner_labels(file, use_dataset=False):
         json.dump(labels_dict, d, indent=2)
         d.close()
 
+def read_data(filepath):
+    if filepath.endswith('.pkl'):
+        data = pickle.load(open(os.path.abspath(filepath), "rb"))
+    if filepath.endswith('.json'):
+        data = json.load(open(os.path.abspath(filepath), "r"))
+    return data
+
+#create a structured dataset with entities classified under different semantic typoes
+def create_structured_data(data_dir, labels_file):
+    if os.path.isdir(data_dir):
+        data_files = [read_data(os.path.join(os.path.abspath(data_dir),i)) for i in os.listdir(data_dir)]
+    else:
+        data_files = [read_data(data_dir)]
+    labels = [i for i in json.load(open(labels_file, 'r'))['labels'] if i.startswith('B-')]
+    labels = [i.split('B-')[-1] for i in labels]
+    print(labels, "\n")
+    dataset = []
+    # with open(dest_file, "w") as d:
+    patient_id = 1
+    for f, file in enumerate(data_files):
+        for idx, doc in enumerate(file):
+            if doc:
+                doct_types_entities_codes_dict = {'patient_id':[int(patient_id)]}
+                for ent in doc['Entities']:
+                    linked_entities = tuple(ent['linked_umls_entities'].items())
+                    try:
+                        linked_cat = linked_entities[0] #selecting entity with highest confidence score
+                        type = linked_cat[1]['type']
+                        snomed_code = linked_cat[0]
+                        entity = ent['name'].lower()
+                        if type not in doct_types_entities_codes_dict:
+                            doct_types_entities_codes_dict[type] = [entity]
+                            doct_types_entities_codes_dict[type+'_snomed_code'] = [snomed_code]
+                        else:
+                            if entity not in doct_types_entities_codes_dict[type]:
+                                doct_types_entities_codes_dict[type].append(entity)
+                                doct_types_entities_codes_dict[type+'_snomed_code'].append(snomed_code)
+                    except IndexError:
+                        pass
+
+                doct_types_entities_codes_dict_df = pd.DataFrame(dict([(k,pd.Series(v)) for k,v in doct_types_entities_codes_dict.items()]))
+                print(doct_types_entities_codes_dict_df)
+                dataset.append(doct_types_entities_codes_dict_df)
+                patient_id += 1
+                print("\n")
+
+    patient_dataset_df = pd.concat(dataset)
+    output_dir = os.path.abspath('../data/structured_data/')
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    patient_dataset_df.to_csv(os.path.join(output_dir, 'patient_data.csv'))
+
+
+
 def main():
-    task = input("What do you want, create_ner_dataset or create_ner_labels ?\n")
+    task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
     if task == "create_ner_dataset":
         source = input("Enter the dataset path ?\n")
         dest = input("Enter the path to an output file ?\n")
@@ -90,6 +147,10 @@ def main():
             create_ner_labels(file, use_dataset=True)
         else:
             create_ner_labels(file)
+    if task == "create_structured_dataset":
+        source = input("Enter the dataset dir or file path ?\n")
+        labels = input("Enter the labels file path ?\n")
+        create_structured_data(source, labels)
 
 if __name__ == "__main__":
     main()
