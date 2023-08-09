@@ -132,7 +132,26 @@ def create_structured_data(data_dir, labels_file):
         os.makedirs(output_dir)
     patient_dataset_df.to_csv(os.path.join(output_dir, 'patient_data.csv'))
 
+# check whether a sequence of ids is a subset of a larger sequence of ids
+def isSubArray(A, B, n, m):
+    i = 0
+    j = 0
+    while (i < n and j < m):
+        if (A[i] == B[j]):
+            i += 1
+            j += 1
+            if (j == m):
+                return True
+        else:
+            i = i - j + 1
+            j = 0
+    return False
 
+#extra padding to use inrder to have an equal number of rows within tokenized input
+def padding(input, max_length, pad_token):
+    pad_tokens = [pad_token]*(max_length - len(input))
+    input += pad_tokens
+    return input
 
 def main():
     task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
