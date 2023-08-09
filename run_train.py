@@ -36,12 +36,14 @@ import torch
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
-from datasets import ClassLabel, load_dataset
+from datasets import Dataset, ClassLabel, load_dataset
 from huggingface_hub import Repository, create_repo
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from mslm.masking import custom_mask
-from mslm import custom_data_load
+from mslm import (
+    custom_data_load,
+    mslm_dataset)
 import warnings
 
 import transformers
@@ -422,7 +424,10 @@ def main():
         column_names = raw_datasets["validation"].column_names
         features = raw_datasets["validation"].features
 
-    text_column_name = "tokens" if "tokens" in column_names else "text"
+    if args.entity_masking:
+        text_column_name = "tokens"
+    else:
+        text_column_name = "text"
 
     # In the event the labels are not a `Sequence[ClassLabel]`, we will need to go through the dataset to get the
     # unique labels.
@@ -514,7 +519,7 @@ def main():
                 examples[text_column_name],
                 max_length=max_seq_length,
                 padding=padding,
-                truncation=True,
+                # truncation=True,
                 return_special_tokens_mask=True,
                 # We use this argument because the texts in our dataset are lists of words (with a label for each word).
                 is_split_into_words=True,
@@ -553,6 +558,7 @@ def main():
                 batched=True,
                 num_proc=args.preprocessing_num_workers,
                 load_from_cache_file=not args.overwrite_cache,
+                remove_columns=['text', "tokens", "ner_tags"],
                 desc="Running tokenizer on every text in dataset",
             )
 
@@ -605,18 +611,29 @@ def main():
 
     # DataLoaders creation:
     if args.entity_masking:
-        print(train_dataset)
         train_dataset = custom_mask.customMask(train_dataset,
                                                tokenizer=tokenizer,
                                                labels_list=label_list,
-                                               mask_id=tokenizer.mask_token_id,
                                                custom_mask=True)
+        train_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(train_dataset))
+        train_data = mslm_dataset.mslmDataset(train_dataset_dict)
+        train_dataloader = DataLoader(train_data, batch_size=args.per_device_train_batch_size)
+
+        eval_dataset = custom_mask.customMask(eval_dataset,
+                                              tokenizer=tokenizer,
+                                              labels_list=label_list,
+                                              custom_mask=True)
+        eval_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(eval_dataset))
+        eval_data = mslm_dataset.mslmDataset(eval_dataset_dict)
+        eval_dataloader = DataLoader(eval_data, batch_size=args.per_device_eval_batch_size)
     else:
         train_dataloader = DataLoader(
             train_dataset, collate_fn=data_collator, batch_size=args.per_device_train_batch_size
         )
         eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size)
-'''
+
+
+
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "LayerNorm.weight"]
@@ -649,19 +666,9 @@ def main():
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
-    for t in train_dataset:
-        print(t)
-        break
-
     for i in train_dataloader:
         print(i)
-        for j in i['input_ids']:
-            x = tokenizer.convert_ids_to_tokens(j)
-            print(x)
-            print(len([i for i in x if i == '[MASK]']) / len(x))
         break
-
-
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
@@ -836,6 +843,6 @@ def main():
             with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
                 json.dump({"perplexity": perplexity}, f)
 
-'''
+
 if __name__ == "__main__":
     main()
