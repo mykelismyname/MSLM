@@ -1,27 +1,3 @@
-#!/usr/bin/env python
-# coding=utf-8
-# Copyright 2021 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-Fine-tuning the library models for masked language modeling (BERT, ALBERT, RoBERTa...)
-on a text file or a dataset without using HuggingFace Trainer.
-
-Here is the full list of checkpoints on the hub that can be fine-tuned by this script:
-https://huggingface.co/models?filter=fill-mask
-"""
-# You can also adapt this script on your own mlm task. Pointers for this are left as comments.
-
 import argparse
 import json
 import logging
@@ -632,8 +608,6 @@ def main():
         )
         eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size)
 
-
-
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "LayerNorm.weight"]
@@ -751,8 +725,18 @@ def main():
             active_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
         else:
             active_dataloader = train_dataloader
+        for i in active_dataloader:
+            for t in i:
+                print(t, i[t].size())
+            print('-----------------')
         for step, batch in enumerate(active_dataloader):
             with accelerator.accumulate(model):
+                input_ids = batch['input_ids']
+                attention_mask = batch['attention_mask']
+                labels = batch['labels']
+                ner_labels = batch['ner_labels']
+                batch = transformers.BatchEncoding(
+                    {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels})
                 outputs = model(**batch)
                 loss = outputs.loss
                 # We keep track of the loss at each epoch
@@ -781,6 +765,12 @@ def main():
         model.eval()
         losses = []
         for step, batch in enumerate(eval_dataloader):
+            input_ids = batch['input_ids']
+            attention_mask = batch['attention_mask']
+            labels = batch['labels']
+            ner_labels = batch['ner_labels']
+            batch = transformers.BatchEncoding(
+                {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels})
             with torch.no_grad():
                 outputs = model(**batch)
 
