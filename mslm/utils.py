@@ -6,6 +6,7 @@ import numpy as np
 import datasets
 import json
 import pandas as pd
+import torch
 
 #create a dataset with BIO tags for each entity
 def create_ner_datasets(data_file, dest_file):
@@ -152,6 +153,11 @@ def padding(input, max_length, pad_token):
     pad_tokens = [pad_token]*(max_length - len(input))
     input += pad_tokens
     return input
+
+#send tensor to available device
+def device(inp):
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+    return inp.to(device)
 
 def main():
     task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
