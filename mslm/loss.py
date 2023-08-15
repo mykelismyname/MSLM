@@ -94,3 +94,20 @@ class MslmLoss(Loss):
         else:
             pass
         return loss
+
+class DetectionLoss(Loss):
+    def __init__(self, *args, **kwargs):
+        self._criterion = torch.nn.CrossEntropyLoss(reduction='none')
+
+    #compute a cross entropy loss
+    def compute_loss(self, inputs, labels, reduction='none', **kwargs):
+        inputs = inputs.view(-1, inputs.size(-1))
+        labels = labels.view(-1)
+        loss = self._criterion(inputs, labels)
+        if reduction == 'mean':
+            loss = loss.mean()
+        elif reduction == 'sum':
+            loss = loss.sum()
+        else:
+            pass
+        return loss
