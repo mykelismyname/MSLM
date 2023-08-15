@@ -36,16 +36,10 @@ class Detection_model(BasicModule):
             all_layer_hidd = torch.mean(all_layer_hidd, dim=0)
             return all_layer_hidd
 
-    def comput_loss(self, ner_preds, ner_labels):
-        assert ner_preds.size(0) == ner_labels.size(0)
-        ner_loss = self.loss_dte(ner_preds, ner_labels)
-        return ner_loss
-
     def forward(self, input):
         input_hidden_states = input.get("hidden_states")
         token_hidden_states = self.prepare_embeddings(input_hidden_states)
         output = self.dropout(self.linear(token_hidden_states))
         det_classifier_output = self.entity_classifier(output)
-        print(det_classifier_output.size())
-        det_output = torch.softmax(det_classifier_output, dim=3)
+        det_output = torch.softmax(det_classifier_output, dim=2)
         return det_output
