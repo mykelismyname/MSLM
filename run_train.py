@@ -17,10 +17,11 @@ from huggingface_hub import Repository, create_repo
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from mslm.masking import custom_mask
-from mslm import (
-    custom_data_load,
-    mslm_dataset)
+from mslm.models import joint_model, mslm_model, detection
+from mslm import utils, mslm_dataset
+from mslm.loss import MslmLoss, DetectionLoss
 import warnings
+from torch import nn
 
 import transformers
 from transformers import (
@@ -37,13 +38,12 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.32.0.dev0")
+# check_min_version("4.32.0.dev0")
 
 logger = get_logger(__name__)
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 MODEL_CONFIG_CLASSES = list(MODEL_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Finetune a transformers model on a Masked Language Modeling task")
@@ -230,6 +230,16 @@ def parse_args():
         default="mslm/custom_data_load.py",
         help="masking entities",
     )
+    parser.add_argument(
+        "--drop_out",
+        default=0.1,
+        help="dropout",
+    )
+    parser.add_argument(
+        "--detection",
+        action="store_true",
+        help="include the detection objective",
+    )
     args = parser.parse_args()
 
     # Sanity checks
@@ -253,14 +263,9 @@ def parse_args():
 
 def main():
     args = parse_args()
-
-    # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
-    # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_mlm_no_trainer", args)
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
-    # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
-    # in the environment
     accelerator_log_kwargs = {}
 
     if args.with_tracking:
@@ -308,7 +313,6 @@ def main():
             os.makedirs(args.output_dir, exist_ok=True)
     accelerator.wait_for_everyone()
 
-    # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
     if args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
@@ -328,17 +332,13 @@ def main():
         data_files = {}
         if args.train_file is not None:
             data_files["train"] = os.path.abspath(args.train_file)
-            # train_data = load_dataset('custom-data-load.py', data_files=[args.train_file], split="train")
         if args.validation_file is not None:
             data_files["validation"] = os.path.abspath(args.validation_file)
         extension = args.train_file.split(".")[-1]
         if extension == "txt":
             extension = "text"
 
-        raw_datasets = load_dataset(
-            args.loading_dataset_script,
-            data_files=data_files
-        )
+        raw_datasets = load_dataset(args.loading_dataset_script, data_files=data_files)
 
         # If no validation data is there, validation_split_percentage will be used to divide the dataset.
         if "validation" not in raw_datasets.keys():
@@ -354,12 +354,10 @@ def main():
             )
 
     # Load pretrained model and tokenizer
-    # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
     if args.config_name:
         config = AutoConfig.from_pretrained(args.config_name)
     elif args.model_name_or_path:
-        config = AutoConfig.from_pretrained(args.model_name_or_path)
+        config = AutoConfig.from_pretrained(args.model_name_or_path, output_hidden_states=True)
     else:
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
@@ -391,8 +389,7 @@ def main():
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
 
-    # Preprocessing the datasets.
-    # First we tokenize all the texts.
+    # Preprocessing the datasets. First we tokenize all the texts.
     if raw_datasets["train"] is not None:
         column_names = raw_datasets["train"].column_names
         features = raw_datasets["train"].features
@@ -403,10 +400,9 @@ def main():
     if args.entity_masking:
         text_column_name = "tokens"
     else:
-        text_column_name = "text"
+        text_column_name = "tokens"
 
-    # In the event the labels are not a `Sequence[ClassLabel]`, we will need to go through the dataset to get the
-    # unique labels.
+    # In the event the labels are not a `Sequence[ClassLabel]`, we will need to go through the dataset to get the unique labels.
     def get_label_list(labels):
         unique_labels = set()
         for label in labels:
@@ -416,8 +412,7 @@ def main():
         return label_list
 
     label_column_name = "ner_tags"
-    # If the labels are of type ClassLabel, they are already integers and we have the map stored somewhere.
-    # Otherwise, we have to get the list of labels manually.
+    # If the labels are of type ClassLabel, they are already integers and we have the map stored somewhere. otherwise, we have to get the list of labels manually.
     labels_are_int = isinstance(features[label_column_name].feature, ClassLabel)
     if labels_are_int:
         label_list = features[label_column_name].feature.names
@@ -425,7 +420,6 @@ def main():
     else:
         label_list = get_label_list(raw_datasets["train"][label_column_name])
         label_to_id = {l: i for i, l in enumerate(label_list)}
-    num_labels = len(label_list)
 
     # Map that sends B-Xxx label to its I-Xxx counterpart
     b_to_i_label = []
@@ -452,138 +446,91 @@ def main():
             )
         max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
 
-    if args.line_by_line:
-        # When using line_by_line, we just tokenize each nonempty line.
-        padding = "max_length" if args.pad_to_max_length else False
+    # When using line_by_line, we just tokenize each nonempty line.
+    padding = "max_length" if args.pad_to_max_length else False
 
-        def tokenize_function(examples):
-            # Remove empty lines
-            examples[text_column_name] = [
-                line for line in examples[text_column_name] if len(line) > 0 and not line.isspace()
-            ]
-            return tokenizer(
-                examples[text_column_name],
-                padding=padding,
-                truncation=True,
-                max_length=max_seq_length,
-                # We use this option because DataCollatorForLanguageModeling (see below) is more efficient when it
-                # receives the `special_tokens_mask`.
-                return_special_tokens_mask=True,
-            )
+    if args.entity_masking:
+        model = joint_model.JointModel(model, config, label_list, args.drop_out).to(device)
 
-        with accelerator.main_process_first():
-            tokenized_datasets = raw_datasets.map(
-                tokenize_function,
-                batched=True,
-                num_proc=args.preprocessing_num_workers,
-                remove_columns=[text_column_name],
-                load_from_cache_file=not args.overwrite_cache,
-                desc="Running tokenizer on dataset line_by_line",
-            )
-    else:
-        # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
-        # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
-        # efficient when it receives the `special_tokens_mask`.
-        def tokenize_function(examples):
-            return tokenizer(examples[text_column_name], return_special_tokens_mask=True)
+    def tokenize_and_align_labels(examples):
+        tokenized_inputs = tokenizer(
+            examples[text_column_name],
+            max_length=max_seq_length,
+            padding=padding,
+            # truncation=True,
+            return_special_tokens_mask=True,
+            # We use this argument because the texts in our dataset are lists of words (with a label for each word).
+            is_split_into_words=True,
+        )
 
-        # When using line_by_line, we just tokenize each nonempty line.
-        padding = "max_length" if args.pad_to_max_length else False
-
-        def tokenize_and_align_labels(examples):
-            tokenized_inputs = tokenizer(
-                examples[text_column_name],
-                max_length=max_seq_length,
-                padding=padding,
-                # truncation=True,
-                return_special_tokens_mask=True,
-                # We use this argument because the texts in our dataset are lists of words (with a label for each word).
-                is_split_into_words=True,
-            )
-
-            tokenized_inputs['labels'] = tokenized_inputs.input_ids.copy()
-            labels = []
-            for i, label in enumerate(examples[label_column_name]):
-                word_ids = tokenized_inputs.word_ids(batch_index=i)
-                previous_word_idx = None
-                label_ids = []
-                for word_idx in word_ids:
-                    # Special tokens have a word id that is None. We set the label to -100 so they are automatically
-                    # ignored in the loss function.
-                    if word_idx is None:
-                        label_ids.append(-100)
-                    # We set the label for the first token of each word.
-                    elif word_idx != previous_word_idx:
-                        label_ids.append(label_to_id[label[word_idx]])
-                    # For the other tokens in a word, we set the label to either the current label or -100, depending on
-                    # the label_all_tokens flag.
+        tokenized_inputs['labels'] = tokenized_inputs.input_ids.copy()
+        labels = []
+        for i, label in enumerate(examples[label_column_name]):
+            word_ids = tokenized_inputs.word_ids(batch_index=i)
+            previous_word_idx = None
+            label_ids = []
+            for word_idx in word_ids:
+                # Special tokens have a word id that is None. We set the label to -100 so they are automatically# ignored in the loss function.
+                if word_idx is None:
+                    label_ids.append(-100)
+                # We set the label for the first token of each word.
+                elif word_idx != previous_word_idx:
+                    label_ids.append(label_to_id[label[word_idx]])
+                else:
+                    if args.label_all_tokens:
+                        label_ids.append(b_to_i_label[label_to_id[label[word_idx]]])
                     else:
-                        if args.label_all_tokens:
-                            label_ids.append(b_to_i_label[label_to_id[label[word_idx]]])
-                        else:
-                            label_ids.append(-100)
-                    previous_word_idx = word_idx
+                        label_ids.append(-100)
+                previous_word_idx = word_idx
 
-                labels.append(label_ids)
-            tokenized_inputs["ner_labels"] = labels
-            return tokenized_inputs
+            labels.append(label_ids)
+        tokenized_inputs["ner_labels"] = labels
+        return tokenized_inputs
 
-        with accelerator.main_process_first():
-            tokenized_datasets = raw_datasets.map(
-                tokenize_and_align_labels,
-                batched=True,
-                num_proc=args.preprocessing_num_workers,
-                load_from_cache_file=not args.overwrite_cache,
-                remove_columns=['text', "tokens", "ner_tags"],
-                desc="Running tokenizer on every text in dataset",
-            )
+    with accelerator.main_process_first():
+        tokenized_datasets = raw_datasets.map(
+            tokenize_and_align_labels,
+            batched=True,
+            num_proc=args.preprocessing_num_workers,
+            load_from_cache_file=not args.overwrite_cache,
+            remove_columns=['text', "tokens", "ner_tags"],
+            desc="Running tokenizer on every text in dataset",
+        )
 
-        # Main data processing function that will concatenate all texts from our dataset and generate chunks of max_seq_length.
-        def group_texts(examples):
-            # Concatenate all texts.
-            concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
-            total_length = len(concatenated_examples[list(examples.keys())[0]])
-            # We drop the small remainder, and if the total_length < max_seq_length  we exclude this batch and return an empty dict.
-            # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
-            total_length = (total_length // max_seq_length) * max_seq_length
-            # Split by chunks of max_len.
-            result = {
-                k: [t[i: i + max_seq_length] for i in range(0, total_length, max_seq_length)]
-                for k, t in concatenated_examples.items()
-            }
-            return result
+    # Main data processing function that will concatenate all texts from our dataset and generate chunks of max_seq_length.
+    def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        # We drop the small remainder, and if the total_length < max_seq_length  we exclude this batch and return an empty dict.
+        # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
+        total_length = (total_length // max_seq_length) * max_seq_length
+        # Split by chunks of max_len.
+        result = {
+            k: [t[i: i + max_seq_length] for i in range(0, total_length, max_seq_length)]
+            for k, t in concatenated_examples.items()
+        }
+        return result
 
-        # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
-        # remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
-        # might be slower to preprocess.
-        #
-        # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
-        # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
-
-        with accelerator.main_process_first():
-            tokenized_datasets = tokenized_datasets.map(
-                group_texts,
-                batched=True,
-                num_proc=args.preprocessing_num_workers,
-                load_from_cache_file=not args.overwrite_cache,
-                desc=f"Grouping texts in chunks of {max_seq_length}",
-            )
+    # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
+    with accelerator.main_process_first():
+        tokenized_datasets = tokenized_datasets.map(
+            group_texts,
+            batched=True,
+            num_proc=args.preprocessing_num_workers,
+            load_from_cache_file=not args.overwrite_cache,
+            desc=f"Grouping texts in chunks of {max_seq_length}",
+        )
 
     train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
 
     # Conditional for small test subsets
     if len(train_dataset) > 3:
-        # Log a few random samples from the training set:
-        # for index in random.sample(range(len(train_dataset)), 3):
         for index in range(0, 2):
             pass
             # logger.info(f"Sample {index} of the training set: {tokenizer.convert_ids_to_tokens(train_dataset[index]['input_ids'])}.")
             # logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
-
-    # Data collator
-    # This one will take care of randomly masking the tokens.
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=args.mlm_probability)
 
     # DataLoaders creation:
     if args.entity_masking:
@@ -591,6 +538,7 @@ def main():
                                                tokenizer=tokenizer,
                                                labels_list=label_list,
                                                custom_mask=True)
+        train_dataset = train_dataset.shuffle(seed=args.seed)
         train_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(train_dataset))
         train_data = mslm_dataset.mslmDataset(train_dataset_dict)
         train_dataloader = DataLoader(train_data, batch_size=args.per_device_train_batch_size)
@@ -603,13 +551,14 @@ def main():
         eval_data = mslm_dataset.mslmDataset(eval_dataset_dict)
         eval_dataloader = DataLoader(eval_data, batch_size=args.per_device_eval_batch_size)
     else:
+        # Data collator: This one will take care of randomly masking the tokens.
+        data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=args.mlm_probability)
         train_dataloader = DataLoader(
-            train_dataset, collate_fn=data_collator, batch_size=args.per_device_train_batch_size
+            train_dataset, shuffle=True, collate_fn=data_collator, batch_size=args.per_device_train_batch_size
         )
         eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=args.per_device_eval_batch_size)
 
-    # Optimizer
-    # Split weights in two groups, one with weight decay and the other not.
+    # Optimizer: Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -622,9 +571,6 @@ def main():
         },
     ]
     optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
-
-    # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
-    # shorter in multiprocess)
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -639,10 +585,6 @@ def main():
         num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
-
-    for i in train_dataloader:
-        print(i)
-        break
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
@@ -716,6 +658,25 @@ def main():
     # update the progress_bar if load from checkpoint
     progress_bar.update(completed_steps)
 
+    #fetch weights for a given dataset and batch them using the the training batch size
+    if args.entity_masking:
+        loss_fct = MslmLoss(args.per_device_train_batch_size, max_seq_length)
+        tracked_dataset_ids = loss_fct.identify_tokens_with_and_without_masks((train_dataloader, eval_dataloader))
+        tr_tracked_data_ids, ev_tracked_data_ids = tracked_dataset_ids[0], tracked_dataset_ids[1]
+        weight_matrix = loss_fct.compute_weights(tr_tracked_data_ids, ev_tracked_data_ids)
+        #train
+        train_weights = loss_fct.compute_mask_specific_weights(tr_tracked_data_ids, weight_matrix=weight_matrix).to(device)
+        #eval
+        eval_weights = loss_fct.compute_mask_specific_weights(ev_tracked_data_ids, weight_matrix=weight_matrix).to(device)
+
+    if args.detection:
+        det_loss_fct = DetectionLoss()
+
+    # det_model = detection.DetectionModel(hidden_dim=config.hidden_size,
+    #                                       token_types=label_list,
+    #                                       drop_out=args.drop_out).to(device)
+    # model = mslm_model.MslmModel(model)
+
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
@@ -725,20 +686,26 @@ def main():
             active_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
         else:
             active_dataloader = train_dataloader
-        for i in active_dataloader:
-            for t in i:
-                print(t, i[t].size())
-            print('-----------------')
+
         for step, batch in enumerate(active_dataloader):
             with accelerator.accumulate(model):
                 input_ids = batch['input_ids']
+                input_size = input_ids.size(0)
                 attention_mask = batch['attention_mask']
                 labels = batch['labels']
                 ner_labels = batch['ner_labels']
-                batch = transformers.BatchEncoding(
-                    {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels})
-                outputs = model(**batch)
-                loss = outputs.loss
+                if args.entity_masking:
+                    batch = transformers.BatchEncoding({'input_ids': input_ids, 'attention_mask': attention_mask})
+                    mslm_outputs, det_outputs = model(batch)
+                    mslm_loss = loss_fct.compute_loss(inputs=mslm_outputs, labels=labels, mask_specific_weights=train_weights[step][:input_size], reduction='mean')
+                    loss = mslm_loss
+                    if args.detection:
+                        det_loss = det_loss_fct.compute_loss(inputs=det_outputs, labels=ner_labels, reduction='mean')
+                        loss = loss + det_loss
+                else:
+                    batch = transformers.BatchEncoding({'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels})
+                    outputs = model(**batch)
+                    loss = outputs.loss
                 # We keep track of the loss at each epoch
                 if args.with_tracking:
                     total_loss += loss.detach().float()
@@ -766,15 +733,26 @@ def main():
         losses = []
         for step, batch in enumerate(eval_dataloader):
             input_ids = batch['input_ids']
+            input_size = input_ids.size(0)
             attention_mask = batch['attention_mask']
             labels = batch['labels']
             ner_labels = batch['ner_labels']
-            batch = transformers.BatchEncoding(
-                {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels})
-            with torch.no_grad():
-                outputs = model(**batch)
 
-            loss = outputs.loss
+            with torch.no_grad():
+                if args.entity_masking:
+                    batch = transformers.BatchEncoding({'input_ids': input_ids, 'attention_mask': attention_mask})
+                    mslm_outputs, det_outputs = model(batch)
+                    mslm_loss = loss_fct.compute_loss(inputs=mslm_outputs, labels=labels, mask_specific_weights=eval_weights[step][:input_size], reduction='mean')
+                    loss = mslm_loss
+                    if args.detection:
+                        det_loss = det_loss_fct.compute_loss(inputs=det_outputs, labels=ner_labels, reduction='mean')
+                        loss = loss + det_loss
+                else:
+                    batch = transformers.BatchEncoding({'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels})
+                    outputs = model(**batch)
+                    loss = outputs.loss
+
+            # loss = outputs.loss
             losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_eval_batch_size)))
 
         losses = torch.cat(losses)
