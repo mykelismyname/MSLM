@@ -7,6 +7,8 @@ import datasets
 import json
 import pandas as pd
 import torch
+import sklearn.metrics as sk
+from copy import deepcopy
 
 #create a dataset with BIO tags for each entity
 def create_ner_datasets(data_file, dest_file):
@@ -159,6 +161,51 @@ def device(inp):
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     return inp.to(device)
 
+#compuyting an exact_match score for named entity recognition
+def exact_match_ner(refs, preds, id2label, input_ids, tokenizer, score = 0):
+    input_ids = input_ids.cpu().tolist()
+    refs = refs.cpu().tolist()
+    preds = preds.cpu().tolist()
+    assert len(refs) == len(preds) == len(input_ids)
+    num_samples = len(input_ids)
+
+    tokens = [tokenizer.convert_ids_to_tokens(i) for i in input_ids]
+
+    match_entity_count, total_entity_count = 0, 0
+    for x in range(num_samples):
+        toks = [t for t in tokens[x] if t != '[PAD]']
+        inds_to_remove = [ind for ind,l in enumerate(refs[x][:len(toks)]) if l == -100]
+        _refs_ = [l for k,l in enumerate(refs[x][:len(toks)]) if k not in inds_to_remove]
+        _preds_ = [l for k,l in enumerate(preds[x][:len(toks)]) if k not in inds_to_remove]
+        _toks_ = [l for k,l in enumerate(toks) if k not in inds_to_remove]
+        seq_length = len(_refs_)
+        n = 0
+        for y in range(seq_length):
+            if y == n:
+                if id2label[_refs_[y]] == 'B':
+                    entity = [_toks_[y]]
+                    # print('++++',_refs_[y], _preds_[y], _toks_[y])
+                    for z in range(y+1, seq_length):
+                        if id2label[_refs_[z]] == "B" and _toks_[z].startswith("##"):
+                            n += 1
+                            entity.append(_toks_[z])
+                        elif id2label[_refs_[z]] == "I":
+                            n += 1
+                            entity.append(_toks_[z])
+                        else:
+                            break
+                    n += 1
+                    # print(_refs_[y:n], _preds_[y:n], y, n, entity)
+                    if _refs_[y:n] == _preds_[y:n]:
+                        # print("=======",_refs_[y:n], _preds_[y:n], _toks_[y:n], entity)
+                        match_entity_count += 1
+                    total_entity_count += 1
+                else:
+                    n += 1
+    if match_entity_count > 0:
+        score = float(match_entity_count/total_entity_count)
+    return (total_entity_count, match_entity_count, score)
+
 def main():
     task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
     if task == "create_ner_dataset":
@@ -178,4 +225,26 @@ def main():
         create_structured_data(source, labels)
 
 if __name__ == "__main__":
-    main()
+    # main()
+    import sys
+    args = sys.argv
+    print(args)
+    p = os.path.abspath(args[1])
+    labels = []
+    for t in os.listdir(p):
+        print(t)
+        if t in ['train.txt', 'test.txt', 'devel.txt']:
+            with open(os.path.join(p, t), 'r') as s:
+                for l in s.readlines():
+                    if l != '\n':
+                        l = l.split()
+                        if l[1] not in labels:
+                            labels.append(l[1].strip())
+    print(labels)
+
+# if 'B' in refs[x]:
+#     toks = tokenizer.convert_ids_to_tokens([i for i in input_ids[x] if i != 0])
+#     print(toks)
+#     print(refs[x][:len(toks)])
+#     print(preds[x][:len(toks)])
+#     print()
