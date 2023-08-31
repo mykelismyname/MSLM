@@ -12,25 +12,26 @@ from mslm import utils
     Masking specific tokens of the input dataset
 '''
 
-def customMask(tokenized_input, tokenizer, labels_list, custom_mask=False):
-    print("Label list: ", labels_list, '\nMask token Id: ', tokenizer.mask_token_id)
+def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask=False, random_mask=False, mlm_prob=0.15):
+    print("Label mapping: ", labels_mapping, '\nMask token Id: ', tokenizer.mask_token_id)
 
     if custom_mask:
         print('\n--------------------------------------CUSTOM MASKING STARTS--------------------------------------\n')
-        input_ids, entity_mask_ids, non_entity_mask_ids  = [], [], []
+
+        masked_input_ids, entity_mask_ids, non_entity_mask_ids  = [], [], []
         total_number_of_tokenized_ids = 0
         for i, j in enumerate(tokenized_input):
             seq_ids, entity_masked_indices, masked_seq_ids, = j['input_ids'], [], []
             total_number_of_tokenized_ids += len(seq_ids)
             initial_seq_ids_lens = len(seq_ids)
-            assert len(seq_ids) == len(j['ner_labels']), "How comes length of tokens doesn't match langth of ner tags"
-            token_labels = [labels_list[n] if n in range(len(labels_list)) else str(n) for n in j['ner_labels']]
+            assert len(seq_ids) == len(j['labels']), "How comes length of tokens doesn't match langth of ner labels"
+            token_labels = [labels_mapping[n] if n in range(len(labels_mapping)) else str(n) for n in j['labels']]
             try:
                 # identifying_entity_using_label searches, finds entities from entire input document and then replaces their token ids with a mask id
                 seq_ids, output_masked_input, seq_entity_labels = identify_entity_using_label(token_ids=seq_ids,
                                                                                               token_labels=token_labels,
                                                                                               tokenizer=tokenizer,
-                                                                                              labels_list=labels_list)
+                                                                                              labels_list=labels_mapping)
 
                 discovered_entities = []
                 if len(seq_entity_labels) >= 1:
@@ -43,19 +44,21 @@ def customMask(tokenized_input, tokenizer, labels_list, custom_mask=False):
                         discovered_entities.append(entity.lower())
 
                 # replace_random_id with mask replaces an arbitrary set of tokens with a mask id
-                output_masked_input, non_entity_masked_indices = replace_random_id_with_mask(output_masked_input,
-                                                                                             indices_masked=entity_masked_indices,
-                                                                                             tokenizer=tokenizer)
+                if random_mask:
+                    output_masked_input, non_entity_masked_indices = replace_random_id_with_mask(output_masked_input,
+                                                                                                 indices_masked=entity_masked_indices,
+                                                                                                 tokenizer=tokenizer,
+                                                                                                 mlm_prob=mlm_prob)
             except:
                 raise ValueError('Entity exists but not identified')
 
             final_seq_ids_lens = len(output_masked_input)
-            assert initial_seq_ids_lens == final_seq_ids_lens == len(j['ner_labels']) == len(j['attention_mask']) == len(j['labels']), \
+            assert initial_seq_ids_lens == final_seq_ids_lens == len(j['labels']) == len(j['attention_mask']) , \
                    "\n-----------------SOMETHING IS WRONG, CHECK OUT THE LENGTH OF THE TENSORS---------------\n"
 
             # print(len(output_masked_input), len(entity_masked_indices), len(non_entity_masked_indices))
             if output_masked_input:
-                input_ids.append(output_masked_input)
+                masked_input_ids.append(output_masked_input)
                 indices_of_entity_masks = [ind for msk_inds in entity_masked_indices for ind in msk_inds]
                 entity_masked_indices_ = [i if i in indices_of_entity_masks else 0 for i in range(len(seq_ids))]
                 non_entity_masked_indices = [m[0] for m in non_entity_masked_indices]
@@ -64,18 +67,18 @@ def customMask(tokenized_input, tokenizer, labels_list, custom_mask=False):
                 entity_mask_ids.append(entity_masked_indices_)
                 non_entity_mask_ids.append(non_entity_masked_indices_)
 
-        tokenized_input_masked = tokenized_input.remove_columns('input_ids')
-        tokenized_input_masked = tokenized_input_masked.add_column(name='input_ids', column=input_ids)
-        tokenized_input_masked = tokenized_input_masked.add_column(name='entity_specific_mask_ids', column=entity_mask_ids)
-        tokenized_input_masked = tokenized_input_masked.add_column(name='non_entity_specific_mask_ids', column=non_entity_mask_ids)
+        # tokenized_input_masked = tokenized_input.remove_columns('input_ids')
+        tokenized_input = tokenized_input.add_column(name='masked_input_ids', column=masked_input_ids)
+        tokenized_input = tokenized_input.add_column(name='entity_specific_mask_ids', column=entity_mask_ids)
+        tokenized_input = tokenized_input.add_column(name='non_entity_specific_mask_ids', column=non_entity_mask_ids)
 
-        n = 0
-        print(type(tokenized_input_masked))
-        for i, j in zip(tokenized_input, tokenized_input_masked):
+        print(type(tokenized_input))
+        for n,j in enumerate(tokenized_input):
             if n < 1:
                 print([tokenizer.convert_ids_to_tokens(ids=[i for i in j['input_ids'] if i != tokenizer.pad_token_id])], len(j['input_ids']))
+                print("\n")
             n += 1
-        return tokenized_input_masked
+        return tokenized_input
     else:
         for n,j in enumerate(tokenized_input):
             if n < 1:
@@ -88,7 +91,7 @@ def customMask(tokenized_input, tokenizer, labels_list, custom_mask=False):
     BASE LEVEL MASKING
     replace a random sequence of id's with a mask id or a replacement value within id's of an input sequence 
 '''
-def replace_random_id_with_mask(input_ids, indices_masked, tokenizer, mlm_prob=0.15):
+def replace_random_id_with_mask(input_ids, indices_masked, tokenizer, mlm_prob):
     indices_of_masks = [ind for msk_inds in indices_masked for ind in msk_inds]
     # ids_masked = [id for msk_grp in indices_of_masks for id in msk_grp]
     non_entity_ids = [(i,j) for i,j in enumerate(input_ids) if j not in tokenizer.all_special_ids]
@@ -141,8 +144,10 @@ def identify_entity_using_label(token_ids, token_labels, tokenizer, labels_list)
         e = 0
         for m in range(len(tokens)):
             if m == e:
+                # if token_ids_copy[m] != 0:
+                #     print(tokens[m],token_ids_copy[m])
                 entity, entity_ids, entity_label, masked_indices = [], [], [], []
-                if token_labels[m].strip().startswith('B-'):
+                if token_labels[m].strip().startswith('B'):
                     entity.append(tokens[m].strip())
                     entity_ids.append(token_ids[m])
                     entity_label.append(token_labels[m].strip())
@@ -150,7 +155,7 @@ def identify_entity_using_label(token_ids, token_labels, tokenizer, labels_list)
                     masked_indices.append(m)
                     e += 1
                     for w in range(m + 1, len(tokens)):
-                        if token_labels[w].startswith('I-'):
+                        if token_labels[w].startswith('I'):
                             entity.append(tokens[w].strip())
                             entity_ids.append(token_ids[w])
                             entity_label.append(token_labels[w].strip())
