@@ -31,7 +31,7 @@ class DetectionModel(nn.Module):
         meta_embeddings = self.meta_embeddings(input_ids)
         meta_embeddings = meta_embeddings.view(b_size, seq_len, self.meta_embedding_dim)
         meta_hidden_states = torch.cat([token_hidden_states, meta_embeddings], dim=2)
-        output = self.dropout(torch.relu(self.linear(meta_hidden_states)))
-        det_classifier_output = self.entity_classifier(output)
-        # det_output = torch.softmax(det_classifier_output, dim=2)
+        meta_hidden_states = self.dropout(torch.relu(self.linear(meta_hidden_states)))
+        det_classifier_output = self.entity_classifier(meta_hidden_states)
+        # det_classifier_output = torch.softmax(det_classifier_output, dim=2)
         return det_classifier_output
