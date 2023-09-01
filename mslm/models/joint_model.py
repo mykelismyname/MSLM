@@ -40,17 +40,20 @@ class JointModel(BasicModule):
         self.reduction = reduction
         self.output = Output()
 
-    def forward(self, input, labels, ms_weights, weight_matrix):
+    def forward(self, input, labels, ms_weights, weight_matrix, train=True):
         mslm_output = self.mslm_model(input)
         mslm_labels = input['input_ids']
         input_size = mslm_labels.size(0)
         ms_weights = ms_weights[:input_size]
-        mslm_loss = self.mslm_loss.compute_loss(mslm_output, mslm_labels, ms_weights, weight_matrix, reduction=self.reduction)
         mslm_hidden_states = mslm_output.get("hidden_states")
         det_output = self.detection(input, mslm_hidden_states)
-        det_loss = self.det_loss.compute_loss(det_output, labels, ms_weights, weight_matrix, reduction=self.reduction)
-        loss = mslm_loss + det_loss
-        self.output.loss = loss
+        if train:
+            mslm_loss = self.mslm_loss.compute_loss(mslm_output, mslm_labels, ms_weights, weight_matrix,
+                                                    reduction=self.reduction)
+            det_loss = self.det_loss.compute_loss(det_output, labels, ms_weights, weight_matrix,
+                                                  reduction=self.reduction)
+            loss = mslm_loss + det_loss
+            self.output.loss = loss
         self.output.logits = det_output
         self.output.hidden_states = mslm_hidden_states
         return self.output
