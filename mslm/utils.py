@@ -236,7 +236,7 @@ def identify_tokens_with_and_without_masks(datasets):
 
 #calculate a weight for the arbitrary masked tokens (base level masking), entity masked tokens
 # (entity-level masking) as well as non-masked tokens
-def compute_weights(train_ids, eval_ids):
+def compute_weights(train_ids, eval_ids, include_non_mask_tokens=False):
     def flatten_batch_of_lists(x):
         output = []
         for batch in x:
@@ -244,6 +244,18 @@ def compute_weights(train_ids, eval_ids):
                 for index in seq:
                     output.append(index)
         return output
+
+    def compute_weight_matrix(list_of_mask_type_counts):
+        total_count = sum(list_of_mask_type_counts)
+        weight_matrix = torch.zeros(len(list_of_mask_type_counts))
+        for n, m in enumerate(list_of_mask_type_counts):
+            if n == 0:
+                weight_matrix[n] = np.sqrt(m / total_count)
+            else:
+                weight_matrix[n] = 1 - float(m / total_count)
+        sft = torch.nn.Softmax(dim=0)
+        # weight_matrix = sft(weight_matrix)
+        return weight_matrix
 
     len_e_ms, len_ne_ms, len_n_ms = 0, 0, 0 #number of entity tokens masked, arbitrary masked tokens and non masked tokens
     for d in [train_ids, eval_ids]:
@@ -255,13 +267,11 @@ def compute_weights(train_ids, eval_ids):
     print(f"Number of entity tokens masked: {len_e_ms}")
     print(f"Number of arbtrary masked tokens: {len_ne_ms}")
     print(f"Number of non masked tokens: {len_n_ms}")
-    total_len = len_e_ms + len_ne_ms + len_n_ms
 
-    weight_matrix = torch.zeros(3)
-    for n,m in enumerate([len_e_ms, len_ne_ms, len_n_ms]):
-        weight_matrix[n] = 1 - float(m/total_len)
-    sft = torch.nn.Softmax(dim=0)
-    return sft(weight_matrix)
+    if include_non_mask_tokens:
+        return compute_weight_matrix([len_e_ms, len_ne_ms, len_n_ms])
+
+    return compute_weight_matrix([len_e_ms, len_ne_ms])
 
 #compute a tensor with a weight for each token with respect to the mask (mask specific weight)
 def compute_mask_specific_weights(data, batch_size, seq_len, weight_matrix):
