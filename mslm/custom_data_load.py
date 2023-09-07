@@ -43,9 +43,8 @@ class EhrdataConfig(datasets.BuilderConfig):
 
 
 class Ehrdatatext(datasets.GeneratorBasedBuilder):
-    """TODO(wikitext_103): Short description of my dataset."""
+    """Dataset of electronic health records (mimic-III) weakly annotated using scispacy"""
 
-    # TODO(wikitext_103): Set up version.
     VERSION = datasets.Version("0.1.0")
     BUILDER_CONFIGS = [
         EhrdataConfig(
@@ -104,36 +103,51 @@ class Ehrdatatext(datasets.GeneratorBasedBuilder):
             data = pickle.load(open(os.path.abspath(filepath), "rb"))
         if filepath.endswith('.json'):
             data = json.load(open(os.path.abspath(filepath), "r"))
+        if filepath.endswith('.txt'):
+            data = open(os.path.abspath(filepath), "r").readlines()
 
-        for idx, doc in enumerate(data):
-            if doc:
-                doc_tokens = [tok for d in doc['Sents'] for tok in d]
-                doc_ents_tags = ["O" for _ in range(len(doc_tokens))]
-                for ent in doc['Entities']:
-                    # linked_entities = tuple(sorted(ent['linked_umls_entities'].items(), key=lambda x:x[1]['score'], reverse=True))
-                    linked_entities = tuple(ent['linked_umls_entities'].items())
-                    try:
-                        tag = linked_entities[0][1]['type']
-                        start, end = ent['pos'][0], ent['pos'][1]
-                        ent_tags = [f"I-{tag}" for i in range(start, end)]
-                        ent_tags[0] = f"B-{tag}"
-                        if all(i in _LABELS for i in ent_tags):
-                            doc_ents_tags[start:end] = ent_tags
-                    except IndexError:
-                        pass
-                doc_text = " ".join(doc_tokens)
-                yield idx, {"text": doc_text, "tokens": doc_tokens, "ner_tags": doc_ents_tags}
-            else:
-                pass
-                yield idx, {"text": "", "tokens": [], "ner_tags": []}
+        if filepath.endswith('.pkl') or filepath.endswith('.json'):
+            for idx, doc in enumerate(data):
+                if doc:
+                    doc_tokens = [tok for d in doc['Sents'] for tok in d]
+                    doc_ents_tags = ["O" for _ in range(len(doc_tokens))]
+                    for ent in doc['Entities']:
+                        # linked_entities = tuple(sorted(ent['linked_umls_entities'].items(), key=lambda x:x[1]['score'], reverse=True))
+                        linked_entities = tuple(ent['linked_umls_entities'].items())
+                        try:
+                            tag = linked_entities[0][1]['type']
+                            start, end = ent['pos'][0], ent['pos'][1]
+                            ent_tags = [f"I-{tag}" for i in range(start, end)]
+                            ent_tags[0] = f"B-{tag}"
+                            if all(i in _LABELS for i in ent_tags):
+                                doc_ents_tags[start:end] = ent_tags
+                        except IndexError:
+                            pass
+                    doc_text = " ".join(doc_tokens)
+                    yield idx, {"text": doc_text,"tokens": doc_tokens, "ner_tags": doc_ents_tags}
+                else:
+                    yield idx, {"text":"", "tokens": [], "ner_tags": []}
 
-        # if filepath.endswith('.pkl'):
-        #     with open(filepath, "rb") as f:
-        #         data = pickle.load(f)
-        #         for idx, doc in enumerate(data):
-        #             if doc:
-        #                 doc_tokens = [tok for d in doc['Sents'] for tok in d]
-        #                 doc_text = " ".join(doc_tokens)
-        #                 yield idx, {"text": doc_text, "tokens": doc_tokens}
-        #             else:
-        #                 yield idx, {"text": "", "tokens":doc_tokens}
+        elif filepath.endswith('.txt'):
+            current_tokens, current_labels = [], []
+            sentence_counter = 0
+            for row in data:
+                row = row.rstrip()
+                if row:
+                    token, label = row.split(" ")
+                    current_tokens.append(token)
+                    current_labels.append(label)
+                else:
+                    if not current_tokens:
+                        continue
+                    assert len(current_tokens) == len(current_labels), "💔 between len of tokens & labels"
+                    doc_text = " ".join(current_tokens)
+                    sentence = (sentence_counter, {"text": doc_text, "tokens": current_tokens, "ner_tags": current_labels})
+                    sentence_counter += 1
+                    current_tokens = []
+                    current_labels = []
+                    yield sentence
+            # Don't forget last sentence in dataset 🧐
+            if current_tokens:
+                doc_text = " ".join(current_tokens)
+                yield sentence_counter, {"text": doc_text, "tokens": current_tokens, "ner_tags": current_labels}
