@@ -170,7 +170,7 @@ def exact_match_ner(refs, preds, id2label, input_ids, tokenizer, score = 0):
     num_samples = len(input_ids)
 
     tokens = [tokenizer.convert_ids_to_tokens(i) for i in input_ids]
-
+    predictions = []
     match_entity_count, total_entity_count = 0, 0
     for x in range(num_samples):
         toks = [t for t in tokens[x] if t != '[PAD]']
@@ -181,6 +181,7 @@ def exact_match_ner(refs, preds, id2label, input_ids, tokenizer, score = 0):
         seq_length = len(_refs_)
         n = 0
         for y in range(seq_length):
+            predictions.append("{} {} {}".format(_toks_[y], id2label[_preds_[y]], id2label[_refs_[y]]))
             if y == n:
                 if id2label[_refs_[y]] == 'B':
                     entity = [_toks_[y]]
@@ -202,9 +203,10 @@ def exact_match_ner(refs, preds, id2label, input_ids, tokenizer, score = 0):
                     total_entity_count += 1
                 else:
                     n += 1
+        predictions.append("\n")
     if match_entity_count > 0:
         score = float(match_entity_count/total_entity_count)
-    return (total_entity_count, match_entity_count, score)
+    return predictions, (total_entity_count, match_entity_count, score)
 
 #retrieve tensors with ids of entity-level, base-level masks as well as non-masked tokens
 def identify_tokens_with_and_without_masks(datasets):
@@ -254,7 +256,7 @@ def compute_weights(train_ids, eval_ids, include_non_mask_tokens=False):
             else:
                 weight_matrix[n] = 1 - float(m / total_count)
         sft = torch.nn.Softmax(dim=0)
-        # weight_matrix = sft(weight_matrix)
+        weight_matrix = sft(weight_matrix)
         return weight_matrix
 
     len_e_ms, len_ne_ms, len_n_ms = 0, 0, 0 #number of entity tokens masked, arbitrary masked tokens and non masked tokens
