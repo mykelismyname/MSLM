@@ -1,10 +1,45 @@
-export SAVE_DIR=output_dir
-export DATA_DIR=../WeLT/datasets/NER/BioRED-Chem
+#!/bin/bash
+export SAVE_DIR=output
+#export DATASET_NAME="BioRED-Chem"
+export DATA_DIR=../WeLT/datasets/NER
 export PRE_TRAINED_MODEL=dmis-lab/biobert-v1.1
 export BATCH_SIZE=8
 export LOSS_REDUCTION='mean'
 export MLM_PROB=0
-export EPOCHS=4
+export EPOCHS=20
+export MAX_LENGTH=256
+export META_EMBEDDING_SIZE=50
+
+datasets=("linnaeus")
+
+dmeta_emb_sizes=(50 100 150 200)
+
+for DATASET_NAME in "${datasets[@]}"
+do
+  CUDA_VISIBLE_DEVICES=0 \
+  python3 run_train_no_tl.py \
+    --model_name_or_path ${PRE_TRAINED_MODEL} \
+    --train_file ${DATA_DIR}/${DATASET_NAME}/train_dev.txt \
+    --validation_file ${DATA_DIR}/${DATASET_NAME}/devel.txt \
+    --test_file ${DATA_DIR}/${DATASET_NAME}/test.txt \
+    --output_dir ${SAVE_DIR}/${DATASET_NAME} \
+    --with_tracking \
+    --pad_to_max_length \
+    --task_name ner \
+    --num_train_epochs ${EPOCHS} \
+    --return_entity_level_metrics \
+    --loading_dataset_script mslm/ner_dataload.py \
+    --label_all_tokens \
+    --per_device_train_batch_size ${BATCH_SIZE} \
+    --per_device_eval_batch_size ${BATCH_SIZE} \
+    --reduction ${LOSS_REDUCTION} \
+    --meta_embedding_dim ${META_EMBEDDING_SIZE} \
+    --entity_masking \
+    --random_mask \
+    --max_length ${MAX_LENGTH} \
+    --mlm_prob ${MLM_PROB} #pass a probability of 0 if you do not want base-level masking
+done
+
 
 #python3 run_train.py \
 #    --train_file ${DATA_DIR}/train.txt \
@@ -21,27 +56,6 @@ export EPOCHS=4
 #    --meta_embedding_dim 30 \
 #    --output_dir ${SAVE_DIR}
 
-CUDA_VISIBLE_DEVICES=0 \
-python3 run_train_no_tl.py \
-  --model_name_or_path ${PRE_TRAINED_MODEL} \
-  --train_file ${DATA_DIR}/train.txt \
-  --validation_file ${DATA_DIR}/devel.txt \
-  --test_file ${DATA_DIR}/test.txt \
-  --output_dir ${SAVE_DIR} \
-  --with_tracking \
-  --pad_to_max_length \
-  --task_name ner \
-  --num_train_epochs ${EPOCHS} \
-  --return_entity_level_metrics \
-  --loading_dataset_script mslm/ner_dataload.py \
-  --label_all_tokens \
-  --per_device_train_batch_size ${BATCH_SIZE} \
-  --per_device_eval_batch_size ${BATCH_SIZE} \
-  --reduction ${LOSS_REDUCTION} \
-  --mlm_prob ${MLM_PROB} #pass a probability of 0 if you do not want base-level masking
-#
-#  --entity_masking \
-#  --random_mask \
 #python3 run_train_tl.py \
 #  --model_name_or_path ${PRE_TRAINED_MODEL} \
 #  --train_file ${DATA_DIR}/train.txt \
