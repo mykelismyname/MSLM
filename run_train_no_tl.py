@@ -332,9 +332,14 @@ def main():
     args = parse_args()
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     #create output_dir
-    args.output_dir = os.path.abspath(args.output_dir+"_{}".format(args.mlm_prob))
+    entity_mask = 'EM' if args.entity_masking else ''
+
+    args.output_dir = os.path.abspath(args.output_dir)
+    args.output_dir = os.path.join(args.output_dir, "ML_{}_{}_{}_MES_{}".format(args.max_length, entity_mask, args.mlm_prob, args.meta_embedding_dim))
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+
+    # args.output_dir = os.path.abspath(args.output_dir + "_{}_{}_{}".format(args.max_length, entity_mask, args.mlm_prob))
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_ner_no_trainer", args)
@@ -672,7 +677,7 @@ def main():
             "weight_decay": 0.0,
         },
     ]
-    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
+    optimizer = torch.optim.AdamW(list(model.parameters()), lr=args.learning_rate)
 
     # Use the device given by the `accelerator` object.
     device = accelerator.device
@@ -816,6 +821,7 @@ def main():
         tracked_dataset_ids = utils.identify_tokens_with_and_without_masks(loaders)
         tr_tracked_data_ids, ev_tracked_data_ids = tracked_dataset_ids[0], tracked_dataset_ids[1]
         weight_matrix = utils.compute_weights(tr_tracked_data_ids, ev_tracked_data_ids)
+        print(f"Weight_matrix: {weight_matrix}")
         train_weights = utils.compute_mask_specific_weights(tr_tracked_data_ids,
                                                             batch_size = args.per_device_train_batch_size,
                                                             seq_len = args.max_length,
@@ -909,10 +915,11 @@ def main():
                 predictions=preds,
                 references=refs,
             )  # predictions and preferences are expected to be a nested list of labels, not label_ids
-            batch_exact_match_evaluation.append(utils.exact_match_ner(labels_gathered,
-                                                                      predictions_gathered,
-                                                                      model.config.id2label,
-                                                                      batch['input_ids'], tokenizer))
+            _, eval_exact_match_score = utils.exact_match_ner(labels_gathered,
+                                                              predictions_gathered,
+                                                              model.config.id2label,
+                                                              batch['input_ids'], tokenizer)
+            batch_exact_match_evaluation.append(eval_exact_match_score)
 
         losses = torch.cat(losses)
         eval_metric = compute_metrics()
@@ -957,6 +964,7 @@ def main():
     if args.test_file:
         test_dataloader = accelerator.prepare(test_dataloader)
         test_result = []
+        test_predictions = []
         for step, batch in enumerate(test_dataloader):
             with torch.no_grad():
                 labels = batch['labels']
@@ -980,14 +988,17 @@ def main():
                 else:
                     samples_seen += labels_gathered.shape[0]
             preds, refs = get_labels(predictions_gathered, labels_gathered)
+
             metric.add_batch(
                 predictions=preds,
                 references=refs,
             )  # predictions and preferences are expected to be a nested list of labels, not label_ids
-            test_result.append(utils.exact_match_ner(labels_gathered,
-                                                     predictions_gathered,
-                                                     model.config.id2label,
-                                                     batch['input_ids'], tokenizer))
+            step_predictions, test_exact_match_score = utils.exact_match_ner(labels_gathered,
+                                                                             predictions_gathered,
+                                                                             model.config.id2label,
+                                                                             batch['input_ids'], tokenizer)
+            test_result.append(test_exact_match_score)
+            test_predictions.extend(step_predictions)
 
         test_metric = compute_metrics()
         test_exact_match_score = np.mean([i[-1] for i in test_result if i[0] > 0])
@@ -1000,7 +1011,7 @@ def main():
         if args.entity_masking:
             unwrapped_model = accelerator.unwrap_model(model)
             unwrapped_model.save(
-                args.output_dir+'/mslm_model.bin'
+                args.output_dir+'/pytorch.bin'
             )
         else:
             unwrapped_model = accelerator.unwrap_model(model)
@@ -1022,27 +1033,37 @@ def main():
                         all_results[key] = float(value)
                     elif isinstance(value, np.int64):
                         all_results[key] = int(value)
-                all_results['Exact_match_score'] = np.mean(epoch_batch_exact_match_evaluation)
+                all_results['Eval_exact_match_score'] = np.mean(epoch_batch_exact_match_evaluation)
                 all_results['Best_exact_match_score'] = max(epoch_batch_exact_match_evaluation)
                 all_results['Last_exact_match_score'] = epoch_batch_exact_match_evaluation[-1]
+                all_results['Exact_match_scores'] = epoch_batch_exact_match_evaluation
                 if args.test_file:
-                    test_results = {f"eval_{k}": v for k, v in test_metric.items()}
+                    test_results = {f"test_{k}": v for k, v in test_metric.items()}
                     for key, value in test_results.items():
                         all_results[key] = float(value)
+                    all_results['Test_exact_match_scores'] = test_exact_match_score
                 json.dump(all_results, f, indent=2)
 
+            if args.test_file:
+                with open(os.path.join(args.output_dir, "prediction.txt"), "w") as tf:
+                    for pred in test_predictions:
+                        if pred == "\n":
+                            tf.writelines(pred)
+                        else:
+                            tf.writelines("{}\n".format(pred))
+                    tf.close()
+
             tracking_metrics_df = pd.DataFrame.from_dict(tracking_metrics)
-            fig, axes = plt.subplots(2, 2, figsize=(10, 7))
+            fig, axes = plt.subplots(2, 2, figsize=(15, 10))
             fig.tight_layout(pad=4)
             tracking_metrics_df_cols = tracking_metrics_df.columns
             for i, ax in zip(range(len(tracking_metrics_df_cols)), axes.flat):
                 df_group = tracking_metrics_df[[tracking_metrics_df_cols[i]]].reset_index().rename(columns={"index":"epochs"})
-                print(df_group)
                 sns.lineplot(ax=ax, x='epochs', y=tracking_metrics_df_cols[i], data=df_group)
                 ax.xaxis.set_major_locator(mticker.MaxNLocator(len(tracking_metrics_df)))
                 ticks_loc = ax.get_xticks().tolist()
                 ax.xaxis.set_major_locator(mticker.FixedLocator(ticks_loc))
-                ax.set_xticklabels(ticks_loc)
+                ax.set_xticklabels(ticks_loc, rotation=90)
                 ax.set_title(tracking_metrics_df_cols[i])
             plot_dir = args.output_dir + "/plots"
             if not os.path.exists(plot_dir):
