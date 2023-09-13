@@ -9,33 +9,82 @@ import pandas as pd
 import torch
 import sklearn.metrics as sk
 from copy import deepcopy
+from glob import glob
+
+_LABELS = {"Disease": ["Acquired Abnormality", "Anatomical Abnormality", "Bacterium", "Archaeon", "Congenital Abnormality",
+           "Cell or Molecular Dysfunction", "Disease or Syndrome", "Virus", "Mental or Behavioral Dysfunction",
+           "Pathologic Function", "Injury or Poisoning"],
+           "Symptom":["Social Behavior", "Sign or Symptom"],
+           "Treatment":["Pharmacologic Substance", "Clinical Drug"]}
 
 #create a dataset with BIO tags for each entity
-def create_ner_datasets(data_file, dest_file):
-    with open(data_file, "r") as f, open(dest_file, "w") as d:
-        data = json.load(f)
-        for idx, doc in enumerate(data):
-            if doc:
-                doc_ents = []
-                for s, sent in enumerate(doc['Sents']):
-                    sent_ents_tags = ["O" for _ in range(len(sent))]
-                    sent_ents = [ent for ent in doc['Entities'] if ent['sent_id'] == s]
-                    for ent in sent_ents:
-                        # linked_entities = tuple(sorted(ent['linked_umls_entities'].items(), key=lambda x:x[1]['score'], reverse=True))
-                        linked_entities = tuple(ent['linked_umls_entities'].items())
-                        try:
-                            tag = linked_entities[0][1]['type']
-                            start, end = ent['pos'][0], ent['pos'][1]
-                            ent_tags = [f"I-{tag}" for i in range(start, end)]
-                            ent_tags[0] = f"B-{tag}"
-                            sent_ents_tags[start:end] = ent_tags
-                        except IndexError:
-                            pass
-                    doc_ents.append(sent_ents_tags)
-                    for x,y in zip(sent, sent_ents_tags):
-                        d.write("{} {}\n".format(x,y))
-                    d.write("\n")
-                d.write("\n---doc_end---\n")
+def create_ner_datasets(data_dir, dest_dir):
+    index_ids = np.random.permutation(12422)
+    train_len = int(0.8 * len(index_ids))
+    dev_len = int(0.1 * len(index_ids))
+    train_ids = index_ids[:train_len]
+    dev_ids = index_ids[train_len:train_len+dev_len]
+    idx_counter = 0
+    dest_dir = os.path.abspath(dest_dir)
+    label_list = [v for k,v in _LABELS.items()]
+    label_list = [i for j in label_list for i in j]
+    with open(dest_dir+"/train.txt", "w") as tr, open(dest_dir+"/dev.txt", "w") as de, open(dest_dir+"/test.txt", "w") as te:
+        for data_file in os.listdir(data_dir):
+            data_file = os.path.join(os.path.abspath(data_dir), data_file)
+            if os.path.basename(data_file).endswith('.pkl'):
+                data = pickle.load(open(data_file, "rb"))
+            if os.path.basename(data_file).endswith('.json'):
+                data = json.load(open(data_file, "r"))
+            if os.path.basename(data_file).endswith('.txt'):
+                data = open(data_file, "r").readlines()
+
+            if os.path.basename(data_file).endswith('.pkl') or os.path.basename(data_file).endswith('.json'):
+                print(data_file)
+                for idx, doc in enumerate(data):
+                    if doc:
+                        doc_tokens = [tok for d in doc['Sents'] for tok in d]
+                        doc_ents_tags = ["O" for _ in range(len(doc_tokens))]
+                        for ent in doc['Entities']:
+                            # linked_entities = tuple(sorted(ent['linked_umls_entities'].items(), key=lambda x:x[1]['score'], reverse=True))
+                            linked_entities = tuple(ent['linked_umls_entities'].items())
+                            try:
+                                tag = linked_entities[0][1]['type']
+                                if tag in label_list:
+                                    start, end = ent['pos'][0], ent['pos'][1]
+                                    if tag in _LABELS["Disease"]:
+                                        _tag_ = "Disease"
+                                    elif tag in _LABELS["Symptom"]:
+                                        _tag_ = "Symptom"
+                                    elif tag in _LABELS["Treatment"]:
+                                        _tag_ = "Treatment"
+                                    else:
+                                        print()
+                                        raise ValueError(f"label {tag} in wrong place")
+                                    ent_tags = [f"I-{_tag_}" for _ in range(start, end)]
+                                    ent_tags[0] = f"B-{_tag_}"
+                                    doc_ents_tags[start:end] = ent_tags
+                            except IndexError:
+                                pass
+
+                        assert len(doc_tokens) == len(doc_ents_tags)
+                        if idx_counter in train_ids:
+                            for x,y in zip(doc_tokens, doc_ents_tags):
+                                tr.write("{} {}\n".format(x, y))
+                            tr.write("\n")
+                        elif idx_counter in dev_ids:
+                            for x, y in zip(doc_tokens, doc_ents_tags):
+                                de.write("{} {}\n".format(x, y))
+                            de.write("\n")
+                        else:
+                            for x, y in zip(doc_tokens, doc_ents_tags):
+                                te.write("{} {}\n".format(x, y))
+                            te.write("\n")
+                        idx_counter += 1
+                    else:
+                        print("here")
+                    if idx == len(data)-1:
+                        print(f"Final Doc-{idx} and idx counter is {idx_counter}")
+
 
 #create a file with a list of all B,I,O labels within the  dataset
 def create_ner_labels(file, use_dataset=False):
@@ -183,14 +232,14 @@ def exact_match_ner(refs, preds, id2label, input_ids, tokenizer, score = 0):
         for y in range(seq_length):
             predictions.append("{} {} {}".format(_toks_[y], id2label[_preds_[y]], id2label[_refs_[y]]))
             if y == n:
-                if id2label[_refs_[y]] == 'B':
+                if id2label[_refs_[y]].startswith("B"):
                     entity = [_toks_[y]]
                     # print('++++',_refs_[y], _preds_[y], _toks_[y])
                     for z in range(y+1, seq_length):
-                        if id2label[_refs_[z]] == "B" and _toks_[z].startswith("##"):
+                        if id2label[_refs_[z]].startswith("B") and _toks_[z].startswith("##"):
                             n += 1
                             entity.append(_toks_[z])
-                        elif id2label[_refs_[z]] == "I":
+                        elif id2label[_refs_[z]].startswith("I"):
                             n += 1
                             entity.append(_toks_[z])
                         else:
@@ -288,6 +337,40 @@ def compute_mask_specific_weights(data, batch_size, seq_len, weight_matrix):
             weights[b][i, non_masked_data[b][i]] = 1
     return weights
 
+#compute lengths of sentences
+def compute_sentence_length(data_dir):
+    data_files = [i for i in glob(data_dir+"/*.txt") if os.path.basename(i) in ['train.txt', 'test.txt', 'dev.txt', 'devel.txt']]
+    sent_lengths = []
+    for data_file in data_files:
+        print(data_file)
+        max_length = 0
+        with open(data_file, 'r') as g:
+            data = g.readlines()
+            tokens = []
+            longest_sentence = None
+            sentence_counter = 0
+            for i,line in enumerate(data):
+                if line == '\n':
+                    length = len(tokens)
+                    sent_lengths.append(length)
+                    if length > max_length:
+                        if length > 0:
+                            max_length = length
+                            longest_sentence = " ".join([k for k in tokens])
+                    sentence_counter += 1
+                    tokens.clear()
+                elif line != " ":
+                    line = line.split()
+                    tokens.append(line[0])
+                else:
+                    print("Line-", line)
+            print(f"{data_file} longest sentence is {max_length} words long")
+            g.close()
+    print(f"Average sentence length {np.mean(sent_lengths)}")
+    print(f"Min sentence length {np.min(sent_lengths)}")
+    print(f"Max Sentence length {np.max(sent_lengths)}")
+
+
 
 def main():
     task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
@@ -306,21 +389,25 @@ def main():
         source = input("Enter the dataset dir or file path ?\n")
         labels = input("Enter the labels file path ?\n")
         create_structured_data(source, labels)
-
+    if task == "compute_max_length":
+        source = input("Enter the dataset dir or file path ?\n")
+        compute_sentence_length(source)
 if __name__ == "__main__":
     # main()
     import sys
     args = sys.argv
     print(args)
-    p = os.path.abspath(args[1])
-    labels = []
-    for t in os.listdir(p):
-        print(t)
-        if t in ['train.txt', 'test.txt', 'devel.txt']:
-            with open(os.path.join(p, t), 'r') as s:
-                for l in s.readlines():
-                    if l != '\n':
-                        l = l.split()
-                        if l[1] not in labels:
-                            labels.append(l[1].strip())
-    print(labels)
+    # create_ner_datasets(data_dir=args[1], dest_dir=args[2])
+    compute_sentence_length(args[1])
+    # p = os.path.abspath(args[1])
+    # labels = []
+    # for t in os.listdir(p):
+    #     print(t)
+    #     if t in ['train.txt', 'test.txt', 'devel.txt']:
+    #         with open(os.path.join(p, t), 'r') as s:
+    #             for l in s.readlines():
+    #                 if l != '\n':
+    #                     l = l.split()
+    #                     if l[1] not in labels:
+    #                         labels.append(l[1].strip())
+    # print(labels)
