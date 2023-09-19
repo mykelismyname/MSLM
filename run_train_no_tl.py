@@ -608,8 +608,11 @@ def main():
         test_dataset = processed_raw_datasets["test"]
 
     # Log a few random samples from the training set:
-    for index in random.sample(range(len(train_dataset)), 3):
-        logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
+    for index in range(2):
+        x = train_dataset[index]['input_ids']
+        logger.info(f"Sample {index} of the training set: {x}.")
+        print(tokenizer.convert_ids_to_tokens(x))
+        print(train_dataset[index]['labels'])
 
     # DataLoaders creation:
     if args.pad_to_max_length:
@@ -927,10 +930,13 @@ def main():
         epoch_batch_exact_match_evaluation.append(batch_exact_match_score)
         if args.with_tracking:
             tracking_metrics['loss'].append(total_loss.item()/len(train_dataloader))
-            tracking_metrics['F1'].append(eval_metric["__f1"])
+            tracking_metrics['F1'].append(eval_metric["overall_f1"])
             tracking_metrics['exact_match_score'].append(batch_exact_match_score)
             eval_loss = torch.mean(losses)
-            perplexity = math.exp(eval_loss)
+            try:
+                perplexity = math.exp(eval_loss)
+            except:
+                perplexity = math.inf
             tracking_metrics['perplexity'].append(perplexity)
             accelerator.print(f"\nepoch {epoch}\n"
                               f"Loss {total_loss.item() / len(train_dataloader)}\n"
@@ -1052,6 +1058,9 @@ def main():
                         else:
                             tf.writelines("{}\n".format(pred))
                     tf.close()
+
+            with open(os.path.join(args.output_dir, "tracked_metrics.json"), "w") as tm:
+                json.dump(tracking_metrics, tm, indent=2)
 
             tracking_metrics_df = pd.DataFrame.from_dict(tracking_metrics)
             fig, axes = plt.subplots(2, 2, figsize=(15, 10))
