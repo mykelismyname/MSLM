@@ -55,6 +55,7 @@ from transformers import (
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -304,6 +305,12 @@ def parse_args():
         help="sample of input to be randomly masked for base-level masking",
     )
     parser.add_argument(
+        "--elm_prob",
+        default=1,
+        type=float,
+        help="sample of ds-terms to be randomly masked for entity-level masking",
+    )
+    parser.add_argument(
         "--reduction",
         default='none',
         type=str,
@@ -331,11 +338,17 @@ def parse_args():
 def main():
     args = parse_args()
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
     #create output_dir
-    entity_mask = 'EM' if args.entity_masking else ''
+    model_name = args.model_name_or_path.split("/")[-1]
+    model_name = re.split(r"\-|\_", model_name)
 
     args.output_dir = os.path.abspath(args.output_dir)
-    args.output_dir = os.path.join(args.output_dir, "ML_{}_{}_{}_MES_{}".format(args.max_length, entity_mask, args.mlm_prob, args.meta_embedding_dim))
+    if args.entity_masking:
+        args.output_dir = os.path.join(args.output_dir, "{}_{}_ELM_{}_BLM_{}_MES_{}".format(model_name[0], args.max_length, args.elm_prob, args.mlm_prob, args.meta_embedding_dim))
+    else:
+        args.output_dir = os.path.join(args.output_dir, "{}_{}".format(model_name[0], args.max_length))
+
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
@@ -476,7 +489,7 @@ def main():
     else:
         config = CONFIG_MAPPING[args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
-
+    print("Config\n", config)
     tokenizer_name_or_path = args.tokenizer_name if args.tokenizer_name else args.model_name_or_path
     if not tokenizer_name_or_path:
         raise ValueError(
@@ -634,7 +647,8 @@ def main():
                                                labels_mapping=model.config.id2label,
                                                custom_mask=True,
                                                random_mask=args.random_mask,
-                                               mlm_prob=args.mlm_prob)
+                                               mlm_prob=args.mlm_prob,
+                                               elm_prob=args.elm_prob)
         train_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(train_dataset))
         train_data = mslm_dataset.mslmDataset(train_dataset_dict)
         train_dataloader = DataLoader(train_data, shuffle=True, batch_size=args.per_device_train_batch_size)
@@ -644,7 +658,8 @@ def main():
                                               labels_mapping=model.config.id2label,
                                               custom_mask=True,
                                               random_mask=args.random_mask,
-                                              mlm_prob=args.mlm_prob)
+                                              mlm_prob=args.mlm_prob,
+                                              elm_prob=args.elm_prob)
         eval_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(eval_dataset))
         eval_data = mslm_dataset.mslmDataset(eval_dataset_dict)
         eval_dataloader = DataLoader(eval_data, batch_size=args.per_device_eval_batch_size)
@@ -655,7 +670,8 @@ def main():
                                                   labels_mapping=model.config.id2label,
                                                   custom_mask=True,
                                                   random_mask=args.random_mask,
-                                                  mlm_prob=args.mlm_prob)
+                                                  mlm_prob=args.mlm_prob,
+                                                  elm_prob=args.elm_prob)
             test_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(test_dataset))
             test_data = mslm_dataset.mslmDataset(test_dataset_dict)
             test_dataloader = DataLoader(test_data, batch_size=args.per_device_eval_batch_size)
@@ -704,8 +720,6 @@ def main():
     model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
-
-
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -1077,7 +1091,10 @@ def main():
             plot_dir = args.output_dir + "/plots"
             if not os.path.exists(plot_dir):
                 os.makedirs(plot_dir)
-            plt.savefig(os.path.join(plot_dir, 'metrics_{}.png'.format(args.mlm_prob)))
+            if args.mlm_prob:
+                plt.savefig(os.path.join(plot_dir, 'metrics_{}_{}.png'.format(args.mlm_prob, args.elm_prob)))
+            else:
+                plt.savefig(os.path.join(plot_dir, 'metrics.png'))
 
 if __name__ == "__main__":
     main()
