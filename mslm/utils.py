@@ -10,6 +10,8 @@ import torch
 import sklearn.metrics as sk
 from copy import deepcopy
 from glob import glob
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 _LABELS = {"Disease": ["Acquired Abnormality", "Anatomical Abnormality", "Bacterium", "Archaeon", "Congenital Abnormality",
            "Cell or Molecular Dysfunction", "Disease or Syndrome", "Virus", "Mental or Behavioral Dysfunction",
@@ -297,13 +299,16 @@ def compute_weights(train_ids, eval_ids, include_non_mask_tokens=False):
         return output
 
     def compute_weight_matrix(list_of_mask_type_counts):
+        list_of_mask_type_counts = list_of_mask_type_counts[:2]
         total_count = sum(list_of_mask_type_counts)
         weight_matrix = torch.zeros(len(list_of_mask_type_counts))
         for n, m in enumerate(list_of_mask_type_counts):
-            if n == 0:
-                weight_matrix[n] = np.sqrt(m / total_count)
-            else:
-                weight_matrix[n] = 1 - float(m / total_count)
+            # if n == 0:
+            #     weight_matrix[n] = np.sqrt(m / total_count)
+            # else:
+            weight_matrix[n] = 1 - float(m / total_count)
+        weight_matrix[0] = max(0.5, weight_matrix[1])
+        weight_matrix[1] = min(0.5, weight_matrix[1])
         sft = torch.nn.Softmax(dim=0)
         weight_matrix = sft(weight_matrix)
         return weight_matrix
@@ -364,13 +369,35 @@ def compute_sentence_length(data_dir):
                     tokens.append(line[0])
                 else:
                     print("Line-", line)
-            print(f"{data_file} longest sentence is {max_length} words long")
+            print(f"{data_file} has {sentence_counter} sentences and the  longest sentence is {max_length} words long")
             g.close()
     print(f"Average sentence length {np.mean(sent_lengths)}")
     print(f"Min sentence length {np.min(sent_lengths)}")
     print(f"Max Sentence length {np.max(sent_lengths)}")
 
-
+#plotting the f1, perplexity, loss over training time
+def plot_metrics(result_dirs, metric):
+    res_dirs = os.listdir(result_dirs)
+    res_dirs_path = os.path.abspath(result_dirs)
+    if metric in ["loss", "perplexity"]:
+        legend_loc = "upper right"
+    else:
+        legend_loc = "lower right"
+    for d in res_dirs:
+        d_loc = os.path.join(res_dirs_path, d)
+        try:
+            x = json.load(open(d_loc+"/tracked_metrics.json", 'r'))
+            f1_scores = x[metric]
+            x_values = [i+1 for i in range(len(f1_scores))]
+            plt.plot(x_values, f1_scores, label=d)
+            plt.legend(loc=legend_loc)
+            plt.xticks(x_values)
+        except Exception as e:
+            continue
+    plt.xlabel("epochs")
+    plt.ylabel(metric)
+    plt.savefig(os.path.join(res_dirs_path, "{}.png".format(metric)))
+    plt.show()
 
 def main():
     task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
@@ -397,8 +424,9 @@ if __name__ == "__main__":
     import sys
     args = sys.argv
     print(args)
+    # compute_sentence_length(args[1])
+    plot_metrics(args[1], args[2])
     # create_ner_datasets(data_dir=args[1], dest_dir=args[2])
-    compute_sentence_length(args[1])
     # p = os.path.abspath(args[1])
     # labels = []
     # for t in os.listdir(p):
