@@ -392,8 +392,9 @@ def plot_metrics(result_dirs, metric):
             plt.plot(x_values, f1_scores, label=d)
             plt.legend(loc=legend_loc)
             plt.xticks(x_values)
-        except Exception as e:
-            continue
+        except OSError as e:
+            print("{} desn't have tracked metrics".format(d))
+            pass
     plt.xlabel("epochs")
     plt.ylabel(metric)
     plt.savefig(os.path.join(res_dirs_path, "{}.png".format(metric)))
