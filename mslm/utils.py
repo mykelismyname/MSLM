@@ -343,15 +343,19 @@ def compute_mask_specific_weights(data, batch_size, seq_len, weight_matrix):
     return weights
 
 #compute lengths of sentences
+#compute lengths of sentences
 def compute_sentence_length(data_dir):
     data_files = [i for i in glob(data_dir+"/*.txt") if os.path.basename(i) in ['train.txt', 'test.txt', 'dev.txt', 'devel.txt']]
     sent_lengths = []
+    entity_lens = []
+    dataset_entity_mentions = 0
     for data_file in data_files:
         print(data_file)
         max_length = 0
+        data_file_entity_mentions = 0
         with open(data_file, 'r') as g:
             data = g.readlines()
-            tokens = []
+            tokens, labels = [], []
             longest_sentence = None
             sentence_counter = 0
             for i,line in enumerate(data):
@@ -363,17 +367,37 @@ def compute_sentence_length(data_dir):
                             max_length = length
                             longest_sentence = " ".join([k for k in tokens])
                     sentence_counter += 1
+                    sent_entity_mentions = [j for j in labels if j.startswith('B')]
+
+                    for m in range(len(labels)):
+                        if labels[m].startswith('B'):
+                            entity = [tokens[m]]
+                            for w in range(m+1, len(labels)):
+                                if labels[w].startswith('I'):
+                                    entity.append(tokens[w])
+                                else:
+                                    break
+                            if len(entity) > 0:
+                                entity_lens.append(len(entity))
+
+                    if len(sent_entity_mentions) > 0:
+                        data_file_entity_mentions += len(sent_entity_mentions)
                     tokens.clear()
+                    labels.clear()
                 elif line != " ":
                     line = line.split()
                     tokens.append(line[0])
+                    labels.append(line[1])
                 else:
                     print("Line-", line)
-            print(f"{data_file} has {sentence_counter} sentences and the  longest sentence is {max_length} words long")
+            print(f"{data_file} has {sentence_counter} sentences and the  longest sentence is {max_length} words long"
+                  f" and {data_file_entity_mentions} entity mentions")
+            dataset_entity_mentions += data_file_entity_mentions
             g.close()
     print(f"Average sentence length {np.mean(sent_lengths)}")
     print(f"Min sentence length {np.min(sent_lengths)}")
     print(f"Max Sentence length {np.max(sent_lengths)}")
+    print(f"The dataset has got {dataset_entity_mentions} entity mentions and average entity mention length {np.mean(entity_lens)}")
 
 #plotting the f1, perplexity, loss over training time
 def plot_metrics(result_dirs, metric):
