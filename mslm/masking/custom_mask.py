@@ -2,17 +2,20 @@
 # @Author: micheala
 # @Created: 05/07/2021 
 # @Contact: michealabaho265@gmail.com
+import random
 import re
 from datasets import Dataset
 import torch
 from typing import List
 import copy
 from mslm import utils
+import math
+import random
 '''
     Masking specific tokens of the input dataset
 '''
 
-def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask=False, random_mask=False, mlm_prob=0.15):
+def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_mask, mlm_prob, elm_prob):
     print("Label mapping: ", labels_mapping, '\nMask token Id: ', tokenizer.mask_token_id)
 
     if custom_mask:
@@ -31,7 +34,7 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask=False, ra
                 seq_ids, output_masked_input, seq_entity_labels = identify_entity_using_label(token_ids=seq_ids,
                                                                                               token_labels=token_labels,
                                                                                               tokenizer=tokenizer,
-                                                                                              labels_list=labels_mapping)
+                                                                                              elm_prob=elm_prob)
 
                 discovered_entities = []
                 if len(seq_entity_labels) >= 1:
@@ -135,19 +138,30 @@ def replace_id_with_mask_id(sequence, replacement, lst, expand=False):
     return new_list, masked_indices
 
 # extract an outcome based on the label
-def identify_entity_using_label(token_ids, token_labels, tokenizer, labels_list):
+def identify_entity_using_label(token_ids, token_labels, tokenizer, elm_prob):
     sentence_entities = []
     tokens = tokenizer.convert_ids_to_tokens(token_ids)
     token_ids_copy = copy.deepcopy(token_ids)
+
+    #number of entities
+    entities = [(i,j) for i,j in enumerate(token_labels) if j.startswith('B')]
+    num_entities = len(entities)
+    indices_of_entities_to_mask = []
+    if num_entities > 0:
+        num_entities_mask = elm_prob*num_entities #proportion of entities to mask
+        if (num_entities_mask - int(num_entities)) >= 0.5:
+            num_entities_mask = math.ceil(num_entities)
+        else:
+            num_entities_mask = int(num_entities_mask)
+        entities_to_mask = random.sample(entities, num_entities_mask)
+        indices_of_entities_to_mask.extend([i[0] for i in entities_to_mask])
 
     if len(tokens) == len(token_labels):
         e = 0
         for m in range(len(tokens)):
             if m == e:
-                # if token_ids_copy[m] != 0:
-                #     print(tokens[m],token_ids_copy[m])
                 entity, entity_ids, entity_label, masked_indices = [], [], [], []
-                if token_labels[m].strip().startswith('B'):
+                if token_labels[m].strip().startswith('B') and m in indices_of_entities_to_mask:
                     entity.append(tokens[m].strip())
                     entity_ids.append(token_ids[m])
                     entity_label.append(token_labels[m].strip())
@@ -169,6 +183,28 @@ def identify_entity_using_label(token_ids, token_labels, tokenizer, labels_list)
                     sentence_entities.append((entity, masked_indices, entity_ids, entity_label))
                 else:
                     e += 1
+        assert(len(indices_of_entities_to_mask) == len([i[0] for i in sentence_entities]))
     else:
         raise ValueError("Mismatch in sizes of the token tensor and token_labels tensor")
     return token_ids_copy, token_ids, sentence_entities
+
+#random span masking
+def span_masking(input_ids, tokenizer, masking_budget):
+
+    non_masked_ids = [j for i, j in enumerate(input_ids) if j not in tokenizer.all_special_ids]
+    start_span_indices_pool = torch.randint(1,len(non_entity_ids))
+    masked_so_far = 0
+    for x in start_span_indices_pool:
+        #ensure its's not a special id
+        if input_ids[x] in non_masked_ids:
+            if not tokenizer.convert_ids_to_tokens(input_ids[x]).staarswith("##"):
+                random_span_len = torch.randint(1,max_length,(1,)).item()
+                input_ids[x:x+random_span_len] = [tokenizer.mask_token_id] * random_span_len
+                masked_so_far += random_span_len
+        else:
+            raise ValueError('Trying to mask an already masked id')
+
+        if masked_so_far > masking_budget:
+            break
+
+    return input_ids, ids_to_mask
