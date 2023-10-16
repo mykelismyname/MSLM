@@ -340,7 +340,7 @@ def compute_mask_specific_weights(data, batch_size, seq_len, weight_matrix):
 
 #compute lengths of sentences
 #compute lengths of sentences
-def compute_sentence_length(data_dir):
+def compute_sentence_length(data_dir, avg_length=0):
     data_files = [i for i in glob(data_dir+"/*.txt") if os.path.basename(i) in ['train.txt', 'test.txt', 'dev.txt', 'devel.txt']]
     sent_lengths = []
     entity_lens = []
@@ -354,9 +354,15 @@ def compute_sentence_length(data_dir):
             tokens, labels = [], []
             longest_sentence = None
             sentence_counter = 0
+            number_above_certain_length, number_below_certain_length = 0, 0
             for i,line in enumerate(data):
                 if line == '\n':
                     length = len(tokens)
+                    if length > float(avg_length):
+                        number_above_certain_length += 1
+                    elif length < float(avg_length):
+                        number_below_certain_length += 1
+
                     sent_lengths.append(length)
                     if length > max_length:
                         if length > 0:
@@ -386,8 +392,9 @@ def compute_sentence_length(data_dir):
                     labels.append(line[1])
                 else:
                     print("Line-", line)
-            print(f"{data_file} has {sentence_counter} sentences and the  longest sentence is {max_length} words long"
-                  f" and {data_file_entity_mentions} entity mentions")
+            print(f"{data_file} has {sentence_counter} sentences and the longest sentence is {max_length} words long"
+                  f" and {data_file_entity_mentions} entity mentions"
+                  f" {number_above_certain_length} sentences above average length and {number_below_certain_length} sentences below average length")
             dataset_entity_mentions += data_file_entity_mentions
             g.close()
     print(f"Average sentence length {np.mean(sent_lengths)}")
@@ -622,7 +629,7 @@ if __name__ == "__main__":
     import sys
     args = sys.argv
     print(args)
-    # compute_sentence_length(args[1])
+    compute_sentence_length(args[1], args[2])
     # plot_metrics(args[1], args[2])
     # plot_metrics_2_(args[1], args[2], args[3], args[4])
     # plot_metrics_2(args[1], args[2], args[3], args[4])
