@@ -35,22 +35,22 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_m
                         output_masked_input, non_entity_masked_indices = span_masking(input_ids=seq_ids,
                                                                                       tokenizer=tokenizer,
                                                                                       masking_rate=mlm_prob)
+                else:
+                    # identifying_entity_using_label searches, finds entities from entire input document and then replaces their token ids with a mask id
+                    seq_ids, output_masked_input, seq_entity_labels = identify_entity_using_label(token_ids=seq_ids,
+                                                                                                  token_labels=token_labels,
+                                                                                                  tokenizer=tokenizer,
+                                                                                                  elm_prob=elm_prob)
 
-                # identifying_entity_using_label searches, finds entities from entire input document and then replaces their token ids with a mask id
-                seq_ids, output_masked_input, seq_entity_labels = identify_entity_using_label(token_ids=seq_ids,
-                                                                                              token_labels=token_labels,
-                                                                                              tokenizer=tokenizer,
-                                                                                              elm_prob=elm_prob)
-
-                discovered_entities = []
-                if len(seq_entity_labels) >= 1:
-                    for q,entity_extraction in enumerate(seq_entity_labels):
-                        entity_toks, masked_indices, entity_tok_ids, entiy_tok_labels = entity_extraction
-                        entity = tokenizer.convert_tokens_to_string(entity_toks)
-                        entity_masked_indices.append(masked_indices)
-                        if not masked_indices and entity.lower() not in discovered_entities:
-                            print("==============", q, entity, entity_tok_ids, masked_indices)
-                        discovered_entities.append(entity.lower())
+                    discovered_entities = []
+                    if len(seq_entity_labels) >= 1:
+                        for q,entity_extraction in enumerate(seq_entity_labels):
+                            entity_toks, masked_indices, entity_tok_ids, entiy_tok_labels = entity_extraction
+                            entity = tokenizer.convert_tokens_to_string(entity_toks)
+                            entity_masked_indices.append(masked_indices)
+                            if not masked_indices and entity.lower() not in discovered_entities:
+                                print("==============", q, entity, entity_tok_ids, masked_indices)
+                            discovered_entities.append(entity.lower())
 
                 # replace_random_id with mask replaces an arbitrary set of tokens with a mask id
                 if random_mask:
@@ -62,6 +62,7 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_m
                 raise ValueError('Entity exists but not identified')
 
             final_seq_ids_lens = len(output_masked_input)
+
             assert initial_seq_ids_lens == final_seq_ids_lens == len(j['labels']) == len(j['attention_mask']) , \
                    "\n-----------------SOMETHING IS WRONG, CHECK OUT THE LENGTH OF THE TENSORS---------------\n"
 
@@ -201,9 +202,6 @@ def span_masking(input_ids, tokenizer, masking_rate, max_length=5):
     n_mask_ids_locs, n_mask_ids = zip(*non_masked_ids)
     start_span_indices_pool = random.sample(range(len(input_ids)), len(input_ids))
     masking_budget = math.ceil(masking_rate * len(non_masked_ids))
-    print("Masking rate: {} Masking budget: {}".format(masking_rate, masking_budget))
-    print(masking_rate * len(non_masked_ids), len(non_masked_ids))
-    print(input_ids)
     masked_so_far = 0
     span_ids_masked = []
     for x in start_span_indices_pool:
@@ -214,17 +212,25 @@ def span_masking(input_ids, tokenizer, masking_rate, max_length=5):
                 random_span_len = torch.randint(1, max_length+1, (1,)).item()
                 random_span_len = min(random_span_len, masking_budget)
                 start, end = x, x+random_span_len
+                # print("++", 'len:',random_span_len, "start:", start, "end:", end)
+                if (masked_so_far + random_span_len) > masking_budget:
+                    random_span_len = masking_budget - masked_so_far
+                    end = x+random_span_len
+                    # print("***exceed m_budget, new start and end", "start:", start, "end:", end)
                 if end >= original_input_len-1:
-                    end = original_input_len-2
+                    end = original_input_len-1
+                    random_span_len = end - start
+                    # print("---end beyong sequence, new start and end", "start:", start, "end:", end)
                 if not any(i==tokenizer.mask_token_id for i in input_ids[start:end]):
                     input_ids[start:end] = [tokenizer.mask_token_id] * random_span_len
-                    span_ids_masked += input_ids[start:end]
-                    print('len:',random_span_len)
-                    random_span_len = (end - start)+1
+                    span_ids_masked += list(zip(range(start, end), input_ids[start:end]))
+                    random_span_len = end - start
+                    # print('len:',random_span_len, "start:", start, "end:", end)
                     masked_so_far += random_span_len
+                    # print(input_ids)
         else:
             pass
         if masked_so_far >= masking_budget:
             break
-    print(input_ids)
-    return input_ids, ids_to_mask
+
+    return input_ids, span_ids_masked
