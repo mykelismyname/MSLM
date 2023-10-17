@@ -212,10 +212,12 @@ def device(inp):
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     return inp.to(device)
 
+#
 def batch_input_creation(batch_input):
     batch = {k: v for k, v in batch_input.items() if k not in ['entity_specific_mask_ids',
                                                                 'non_entity_specific_mask_ids',
-                                                                'input_ids']}
+                                                                'input_ids',
+                                                                'masked_input_ids']}
     batch['input_ids'] = batch_input.pop('masked_input_ids')
     return batch
 
