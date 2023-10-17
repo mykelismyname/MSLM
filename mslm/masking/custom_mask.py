@@ -15,7 +15,7 @@ import random
     Masking specific tokens of the input dataset
 '''
 
-def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_mask, mlm_prob, elm_prob):
+def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_mask, mlm_prob, elm_prob, strategy=None):
     print("Label mapping: ", labels_mapping, '\nMask token Id: ', tokenizer.mask_token_id)
 
     if custom_mask:
@@ -30,6 +30,12 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_m
             assert len(seq_ids) == len(j['labels']), "How comes length of tokens doesn't match langth of ner labels"
             token_labels = [labels_mapping[n] if n in range(len(labels_mapping)) else str(n) for n in j['labels']]
             try:
+                if strategy:
+                    if strategy == 'span':
+                        output_masked_input, non_entity_masked_indices = span_masking(input_ids=seq_ids,
+                                                                                      tokenizer=tokenizer,
+                                                                                      masking_rate=mlm_prob)
+
                 # identifying_entity_using_label searches, finds entities from entire input document and then replaces their token ids with a mask id
                 seq_ids, output_masked_input, seq_entity_labels = identify_entity_using_label(token_ids=seq_ids,
                                                                                               token_labels=token_labels,
@@ -189,22 +195,36 @@ def identify_entity_using_label(token_ids, token_labels, tokenizer, elm_prob):
     return token_ids_copy, token_ids, sentence_entities
 
 #random span masking
-def span_masking(input_ids, tokenizer, masking_budget):
-
-    non_masked_ids = [j for i, j in enumerate(input_ids) if j not in tokenizer.all_special_ids]
-    start_span_indices_pool = torch.randint(1,len(non_entity_ids))
+def span_masking(input_ids, tokenizer, masking_rate, max_length=5):
+    non_masked_ids = [(i,j) for i,j in enumerate(input_ids) if j not in tokenizer.all_special_ids]
+    original_input_len = len(non_masked_ids)+2
+    n_mask_ids_locs, n_mask_ids = zip(*non_masked_ids)
+    start_span_indices_pool = random.sample(range(len(input_ids)), len(input_ids))
+    masking_budget = math.ceil(masking_rate * len(non_masked_ids))
+    print("Masking rate: {} Masking budget: {}".format(masking_rate, masking_budget))
+    print(masking_rate * len(non_masked_ids), len(non_masked_ids))
+    print(input_ids)
     masked_so_far = 0
+    span_ids_masked = []
     for x in start_span_indices_pool:
         #ensure its's not a special id
-        if input_ids[x] in non_masked_ids:
-            if not tokenizer.convert_ids_to_tokens(input_ids[x]).staarswith("##"):
-                random_span_len = torch.randint(1,max_length,(1,)).item()
-                input_ids[x:x+random_span_len] = [tokenizer.mask_token_id] * random_span_len
-                masked_so_far += random_span_len
+        if input_ids[x] in n_mask_ids:
+            if not tokenizer.convert_ids_to_tokens(input_ids[x]).startswith("##"):
+                #get a random length of span to mask
+                random_span_len = torch.randint(1, max_length+1, (1,)).item()
+                random_span_len = min(random_span_len, masking_budget)
+                start, end = x, x+random_span_len
+                if end >= original_input_len-1:
+                    end = original_input_len-2
+                if not any(i==tokenizer.mask_token_id for i in input_ids[start:end]):
+                    input_ids[start:end] = [tokenizer.mask_token_id] * random_span_len
+                    span_ids_masked += input_ids[start:end]
+                    print('len:',random_span_len)
+                    random_span_len = (end - start)+1
+                    masked_so_far += random_span_len
         else:
-            raise ValueError('Trying to mask an already masked id')
-
-        if masked_so_far > masking_budget:
+            pass
+        if masked_so_far >= masking_budget:
             break
-
+    print(input_ids)
     return input_ids, ids_to_mask
