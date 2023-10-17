@@ -887,7 +887,8 @@ def main():
                 outputs = model(batch, labels, train_weights[step], weight_matrix)
                 loss = outputs.loss
             else:
-                batch = utils.batch_input_creation(batch) if args.strategy else batch
+                if args.strategy:
+                    batch = utils.batch_input_creation(batch)
                 outputs = model(**batch)
                 loss = outputs.loss
 
