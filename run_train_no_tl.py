@@ -170,7 +170,7 @@ def parse_args():
         "--max_train_steps",
         type=int,
         default=None,
-        help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
+        help="Total number of training steps to perform. If pr:qovided, overrides num_train_epochs.",
     )
     parser.add_argument(
         "--gradient_accumulation_steps",
@@ -371,9 +371,11 @@ def main():
     )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
+        print("-----------------------------AT THIS LOCATION--------------------------------")
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_info()
     else:
+        print("-----------------------------NOT AT THIS LOCATION--------------------------------")
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
 
@@ -1030,14 +1032,14 @@ def main():
         accelerator.wait_for_everyone()
         if args.entity_masking:
             unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save(
-                args.output_dir+'/pytorch.bin'
-            )
+            # unwrapped_model.save(
+            #     args.output_dir+'/pytorch.bin'
+            # )
         else:
             unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(
-                args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-            )
+            # unwrapped_model.save_pretrained(
+            #     args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
+            # )
         if accelerator.is_main_process:
             tokenizer.save_pretrained(args.output_dir)
             if args.push_to_hub:
