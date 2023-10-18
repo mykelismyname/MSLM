@@ -212,7 +212,7 @@ def device(inp):
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     return inp.to(device)
 
-#
+#create batch with only items necessary for the mask language models to encode
 def batch_input_creation(batch_input):
     batch = {k: v for k, v in batch_input.items() if k not in ['entity_specific_mask_ids',
                                                                 'non_entity_specific_mask_ids',
