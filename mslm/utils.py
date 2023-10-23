@@ -201,6 +201,15 @@ def isSubArray(A, B, n, m):
             j = 0
     return False
 
+#check if span or sequence is a sub-span or subsequence of a large span or sequence respectively
+def isSubsequence(s: str, t: str) -> bool:
+    i, j = 0, 0
+    while i < len(s) and j < len(t):
+        if s[i] == t[j]:
+            i += 1
+        j += 1
+    return i == len(s)
+
 #extra padding to use inrder to have an equal number of rows within tokenized input
 def padding(input, max_length, pad_token):
     pad_tokens = [pad_token]*(max_length - len(input))
