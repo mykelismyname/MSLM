@@ -11,6 +11,9 @@ import copy
 from mslm import utils
 import math
 import random
+import nltk
+from nltk import *
+from nltk.collocations import *
 '''
     Masking specific tokens of the input dataset
 '''
@@ -20,7 +23,6 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_m
 
     if custom_mask:
         print('\n--------------------------------------CUSTOM MASKING STARTS--------------------------------------\n')
-
         masked_input_ids, entity_mask_ids, non_entity_mask_ids  = [], [], []
         total_number_of_tokenized_ids = 0
         for i, j in enumerate(tokenized_input):
@@ -31,7 +33,7 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_m
             token_labels = [labels_mapping[n] if n in range(len(labels_mapping)) else str(n) for n in j['labels']]
             try:
                 if strategy:
-                    if strategy == 'span':
+                    if strategy.lower() == 'span':
                         output_masked_input, non_entity_masked_indices = span_masking(input_ids=seq_ids,
                                                                                       tokenizer=tokenizer,
                                                                                       masking_rate=mlm_prob)
@@ -82,7 +84,6 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_m
         tokenized_input = tokenized_input.add_column(name='entity_specific_mask_ids', column=entity_mask_ids)
         tokenized_input = tokenized_input.add_column(name='non_entity_specific_mask_ids', column=non_entity_mask_ids)
 
-        print(type(tokenized_input))
         for n,j in enumerate(tokenized_input):
             if n < 1:
                 print([tokenizer.convert_ids_to_tokens(ids=[i for i in j['input_ids'] if i != tokenizer.pad_token_id])], len(j['input_ids']))
@@ -232,5 +233,5 @@ def span_masking(input_ids, tokenizer, masking_rate, max_length=5):
             pass
         if masked_so_far >= masking_budget:
             break
-
     return input_ids, span_ids_masked
+
