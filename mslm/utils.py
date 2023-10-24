@@ -1,13 +1,17 @@
 import os
 import pickle
+import re
+import sys
 import numpy as np
+import datasets
 import json
 import pandas as pd
 import torch
+import sklearn.metrics as sk
+from copy import deepcopy
 from glob import glob
 import matplotlib.pyplot as plt
 import seaborn as sns
-import ast
 
 _LABELS = {"Disease": ["Acquired Abnormality", "Anatomical Abnormality", "Bacterium", "Archaeon", "Congenital Abnormality",
            "Cell or Molecular Dysfunction", "Disease or Syndrome", "Virus", "Mental or Behavioral Dysfunction",
@@ -197,6 +201,15 @@ def isSubArray(A, B, n, m):
             j = 0
     return False
 
+#check if span or sequence is a sub-span or subsequence of a large span or sequence respectively
+def isSubsequence(s: str, t: str) -> bool:
+    i, j = 0, 0
+    while i < len(s) and j < len(t):
+        if s[i] == t[j]:
+            i += 1
+        j += 1
+    return i == len(s)
+
 #extra padding to use inrder to have an equal number of rows within tokenized input
 def padding(input, max_length, pad_token):
     pad_tokens = [pad_token]*(max_length - len(input))
@@ -207,6 +220,15 @@ def padding(input, max_length, pad_token):
 def device(inp):
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     return inp.to(device)
+
+#create batch with only items necessary for the mask language models to encode
+def batch_input_creation(batch_input):
+    batch = {k: v for k, v in batch_input.items() if k not in ['entity_specific_mask_ids',
+                                                                'non_entity_specific_mask_ids',
+                                                                'input_ids',
+                                                                'masked_input_ids']}
+    batch['input_ids'] = batch_input.pop('masked_input_ids')
+    return batch
 
 #compuyting an exact_match score for named entity recognition
 def exact_match_ner(refs, preds, id2label, input_ids, tokenizer, score = 0):
@@ -339,8 +361,7 @@ def compute_mask_specific_weights(data, batch_size, seq_len, weight_matrix):
     return weights
 
 #compute lengths of sentences
-#compute lengths of sentences
-def compute_sentence_length(data_dir, avg_length=0):
+def compute_sentence_length(data_dir):
     data_files = [i for i in glob(data_dir+"/*.txt") if os.path.basename(i) in ['train.txt', 'test.txt', 'dev.txt', 'devel.txt']]
     sent_lengths = []
     entity_lens = []
@@ -354,15 +375,9 @@ def compute_sentence_length(data_dir, avg_length=0):
             tokens, labels = [], []
             longest_sentence = None
             sentence_counter = 0
-            number_above_certain_length, number_below_certain_length = 0, 0
             for i,line in enumerate(data):
                 if line == '\n':
                     length = len(tokens)
-                    if length > float(avg_length):
-                        number_above_certain_length += 1
-                    elif length < float(avg_length):
-                        number_below_certain_length += 1
-
                     sent_lengths.append(length)
                     if length > max_length:
                         if length > 0:
@@ -392,9 +407,8 @@ def compute_sentence_length(data_dir, avg_length=0):
                     labels.append(line[1])
                 else:
                     print("Line-", line)
-            print(f"{data_file} has {sentence_counter} sentences and the longest sentence is {max_length} words long"
-                  f" and {data_file_entity_mentions} entity mentions"
-                  f" {number_above_certain_length} sentences above average length and {number_below_certain_length} sentences below average length")
+            print(f"{data_file} has {sentence_counter} sentences and the  longest sentence is {max_length} words long"
+                  f" and {data_file_entity_mentions} entity mentions")
             dataset_entity_mentions += data_file_entity_mentions
             g.close()
     print(f"Average sentence length {np.mean(sent_lengths)}")
@@ -427,183 +441,6 @@ def plot_metrics(result_dirs, metric):
     plt.savefig(os.path.join(res_dirs_path, "{}.png".format(metric)))
     plt.show()
 
-def plot_metrics_2_(result_dirs, metric, datasets, models):
-    # create plots to monitor the validation metrics (F1, exact_match_score etc) of various datasets
-    # during the course of training
-    res_dirs = os.listdir(result_dirs)
-    res_dirs_path = os.path.abspath(result_dirs)
-    datasets = [i.lower() for i in datasets.split()]
-    if metric in ["loss", "perplexity"]:
-        legend_loc = "upper right"
-    else:
-        legend_loc = "lower right"
-
-    models = models.split()
-    fig, ax = plt.subplots(1,4, figsize=(21,5))
-
-    fig.tight_layout(pad=2)
-
-    dir_name, _dirs_ = [], {}
-    for d in res_dirs:
-        if d.lower() in datasets:
-            if d not in dir_name:
-                dir_name.append(d)
-            d_ = os.path.join(res_dirs_path, d)
-            _dirs_[d.lower()] = []
-            for m in models:
-                if m.lower() == 'biobert' and d.lower() in ['bc2gm', 'bc5cdr-chem']:
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256")
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256_ELM_0.5_BLM_0.0_MES_100")
-                if m.lower() == 'pubmedbert' and d.lower() in ['jnlpba', 'ncbi-disease']:
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256")
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256_ELM_0.5_BLM_0.0_MES_100")
-                if m not in dir_name:
-                    dir_name.append(m)
-
-
-    _dirs_ = [(k,v) for k,v in _dirs_.items()]
-    for i, ax in zip(range(len(_dirs_)), ax.flat):
-        dataset, files = _dirs_[i]
-        best_scores = {}
-        for d_loc in files:
-            label_name = os.path.basename(d_loc)
-            if label_name.__contains__('ELM'):
-                l = label_name.split("_")[0]
-                label_name = dataset + "_MSLM_" + l
-            else:
-                l = label_name.split("_")[0]
-                label_name = dataset + "_" + l
-
-            x = json.load(open(d_loc + "/tracked_metrics.json", 'r'))
-            all_f1_scores = [round(i*100, 4) for i in x[metric]]
-            x_values = [i + 1 for i in range(len(all_f1_scores))]
-            ax.plot(x_values, all_f1_scores, label=label_name, marker='.')
-            ax.legend(loc=legend_loc, fontsize=12.5)
-            f1_scores = [(i + 1, j) for i, j in enumerate(all_f1_scores)]
-            f1_scores_sorted = sorted(f1_scores, key=lambda x: x[1])
-            epoch, best_f1 = f1_scores_sorted[-1]
-            if label_name.__contains__('MSLM'):
-                best_scores["MSLM"] = (epoch, best_f1)
-                print("MSLM", all_f1_scores)
-            else:
-                best_scores["vanilla"] = (epoch, best_f1)
-                print("Vanilla", all_f1_scores)
-
-            if label_name.__contains__('MSLM'):
-                diff = [abs(i - best_scores['vanilla'][1]) for i in all_f1_scores]
-                intersecting_score = min(diff)
-                epoch = diff.index(intersecting_score)
-                print("at", all_f1_scores)
-                best_f1 = all_f1_scores[epoch]
-                ax.scatter(epoch + 1, best_f1, color='red', marker='*')
-                my_y_max = (best_f1 - ax.get_ylim()[0]) / (ax.get_ylim()[1] - ax.get_ylim()[0])
-                my_x_max = (epoch + 1 - ax.get_xlim()[0]) / (ax.get_xlim()[1] - ax.get_xlim()[0])
-                print(diff, intersecting_score)
-                print("here", best_scores)
-                print("Best:", best_f1, epoch)
-                ax.axhline(y=best_f1, xmin=1, xmax=my_x_max, clip_on=False, color='blue', linewidth=1,
-                           linestyle="dashdot")
-                ax.axvline(x=epoch + 1, ymin=0, ymax=my_y_max, clip_on=False, color='blue', linewidth=1,
-                           linestyle="dashdot")
-                ax.spines[['right', 'top']].set_visible(False)
-                ax.spines['bottom'].set_color('#000000')
-                ax.spines['right'].set_color('#000000')
-                ax.spines['bottom'].set_linewidth(1.5)
-                # ax.spines['right'].set_linewidth(1.5)
-                ax.tick_params(colors='black')
-                ax.tick_params(axis='both', which='both', width=2)
-                ax.tick_params(axis='both', which='both', labelsize=12)
-
-        ax.set_title(dataset, fontsize=14, fontweight='bold')
-        ax.set_xlabel("epochs", fontsize=12)
-        ax.set_ylabel(metric, fontsize=12)
-
-    dir_name = "_".join([i for i in dir_name])
-    plt.savefig(os.path.join(res_dirs_path, "{}_{}.png".format(dir_name, metric)))
-    plt.show()
-
-def plot_metrics_2(result_dirs, metric, datasets, models):
-    #create plots to monitor the validation metrics (F1, exact_match_score etx) during the course of training
-    res_dirs = os.listdir(result_dirs)
-    res_dirs_path = os.path.abspath(result_dirs)
-    datasets = [i.lower() for i in datasets.split()]
-    if metric in ["loss", "perplexity"]:
-        legend_loc = "upper right"
-    else:
-        legend_loc = "lower right"
-    print(models)
-    models = models.split()
-    print(models)
-    fig, ax = plt.subplots()
-
-    dir_name = ""
-    for d in res_dirs:
-        if d.lower() in datasets:
-            dir_name += d+"_"
-            d_ = os.path.join(res_dirs_path, d)
-            _dirs_ = []
-            for _d_ in models:
-                dir_name += _d_+"_"
-                _dirs_.append(d_+"/"+_d_+"_256")
-                _dirs_.append(d_+"/"+_d_+"_256_ELM_0.5_BLM_0.0_MES_100")
-
-            best_scores = {}
-            for d_loc in _dirs_:
-                print(d_loc+"/tracked_metrics.json")
-                label_name = os.path.basename(d_loc)
-                if label_name.__contains__('ELM'):
-                    l = label_name.split("_")[0]
-                    label_name = d+"_MSLM_"+l
-                else:
-                    l = label_name.split("_")[0]
-                    label_name = d + "_" + l
-                try:
-                    x = json.load(open(d_loc+"/tracked_metrics.json", 'r'))
-                    all_f1_scores = [round(i, 4) for i in x[metric]]
-                    x_values = [i+1 for i in range(len(all_f1_scores))]
-                    ax.plot(x_values, all_f1_scores, label=label_name, marker='.')
-                    ax.legend(loc=legend_loc)
-                    f1_scores = [(i+1,j) for i,j in enumerate(all_f1_scores)]
-                    f1_scores_sorted = sorted(f1_scores, key=lambda x:x[1])
-                    epoch, best_f1 = f1_scores_sorted[-1]
-                    if label_name.__contains__('MSLM'):
-                        best_scores["MSLM"] = (epoch, best_f1)
-                        print("MSLM", all_f1_scores)
-                    else:
-                        best_scores["vanilla"] = (epoch, best_f1)
-                        print("Vanilla", all_f1_scores)
-
-                    if label_name.__contains__('MSLM'):
-                        diff = [abs(i - best_scores['vanilla'][1]) for i in all_f1_scores]
-                        intersecting_score = min(diff)
-                        epoch = diff.index(intersecting_score)
-                        print("at", all_f1_scores)
-                        best_f1 = all_f1_scores[epoch]
-                        ax.scatter(epoch+1, best_f1, color='red', marker='*')
-                        my_y_max = (best_f1 - ax.get_ylim()[0]) / (ax.get_ylim()[1] - ax.get_ylim()[0])
-                        my_x_max = (epoch+1 - ax.get_xlim()[0]) / (ax.get_xlim()[1] - ax.get_xlim()[0])
-                        print(diff, intersecting_score)
-                        print("here",  best_scores)
-                        print("Best:", best_f1, epoch)
-                        ax.axhline(y=best_f1, xmin=1, xmax=my_x_max, clip_on=False, color='blue', linewidth=1, linestyle="dashdot")
-                        ax.axvline(x=epoch+1, ymin=0, ymax=my_y_max, clip_on=False, color='blue', linewidth=1, linestyle="dashdot")
-                        ax.spines[['right', 'top']].set_visible(False)
-                        ax.spines['bottom'].set_color('#000000')
-                        ax.spines['top'].set_color('#000000')
-                        ax.spines['right'].set_color('#000000')
-                        ax.spines['left'].set_color('#000000')
-                        ax.tick_params(colors='black')
-                    # plt.xticks(x_values)
-                except OSError as e:
-                    print("{} desn't have tracked metrics".format(d))
-                    pass
-
-    plt.xlabel("epochs")
-    plt.ylabel(metric)
-    plt.savefig(os.path.join(res_dirs_path, "{}{}.png".format(dir_name, metric)))
-    plt.show()
-
-
 def main():
     task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
     if task == "create_ner_dataset":
@@ -629,10 +466,18 @@ if __name__ == "__main__":
     import sys
     args = sys.argv
     print(args)
-    compute_sentence_length(args[1], args[2])
+    compute_sentence_length(args[1])
     # plot_metrics(args[1], args[2])
-    # plot_metrics_2_(args[1], args[2], args[3], args[4])
-    # plot_metrics_2(args[1], args[2], args[3], args[4])
     # create_ner_datasets(data_dir=args[1], dest_dir=args[2])
-
-
+    # p = os.path.abspath(args[1])
+    # labels = []
+    # for t in os.listdir(p):
+    #     print(t)
+    #     if t in ['train.txt', 'test.txt', 'devel.txt']:
+    #         with open(os.path.join(p, t), 'r') as s:
+    #             for l in s.readlines():
+    #                 if l != '\n':
+    #                     l = l.split()
+    #                     if l[1] not in labels:
+    #                         labels.append(l[1].strip())
+    # print(labels)

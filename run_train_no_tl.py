@@ -170,7 +170,7 @@ def parse_args():
         "--max_train_steps",
         type=int,
         default=None,
-        help="Total number of training steps to perform. If pr:qovided, overrides num_train_epochs.",
+        help="Total number of training steps to perform. If provided, overrides num_train_epochs.",
     )
     parser.add_argument(
         "--gradient_accumulation_steps",
@@ -311,6 +311,12 @@ def parse_args():
         help="sample of ds-terms to be randomly masked for entity-level masking",
     )
     parser.add_argument(
+        "--strategy",
+        default=None,
+        type=str,
+        help="pmi - pointwise mututal information masking or span - span masking",
+    )
+    parser.add_argument(
         "--reduction",
         default='none',
         type=str,
@@ -346,6 +352,9 @@ def main():
     args.output_dir = os.path.abspath(args.output_dir)
     if args.entity_masking:
         args.output_dir = os.path.join(args.output_dir, "{}_{}_ELM_{}_BLM_{}_MES_{}".format(model_name[0], args.max_length, args.elm_prob, args.mlm_prob, args.meta_embedding_dim))
+    elif args.strategy:
+        args.output_dir = os.path.join(args.output_dir,
+                                       "{}_{}_{}_{}".format(model_name[0], args.max_length, args.strategy, args.mlm_prob))
     else:
         args.output_dir = os.path.join(args.output_dir, "{}_{}".format(model_name[0], args.max_length))
 
@@ -371,11 +380,9 @@ def main():
     )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
-        print("-----------------------------AT THIS LOCATION--------------------------------")
         datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_info()
     else:
-        print("-----------------------------NOT AT THIS LOCATION--------------------------------")
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
 
@@ -643,14 +650,16 @@ def main():
         )
 
     # DataLoaders creation:
-    if args.entity_masking:
+    if args.entity_masking or args.strategy:
+        print(f"\nSTRATEGY======================================================{args.strategy}\n")
         train_dataset = custom_mask.customMask(train_dataset,
                                                tokenizer=tokenizer,
                                                labels_mapping=model.config.id2label,
                                                custom_mask=True,
                                                random_mask=args.random_mask,
                                                mlm_prob=args.mlm_prob,
-                                               elm_prob=args.elm_prob)
+                                               elm_prob=args.elm_prob,
+                                               strategy=args.strategy)
         train_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(train_dataset))
         train_data = mslm_dataset.mslmDataset(train_dataset_dict)
         train_dataloader = DataLoader(train_data, shuffle=True, batch_size=args.per_device_train_batch_size)
@@ -661,7 +670,8 @@ def main():
                                               custom_mask=True,
                                               random_mask=args.random_mask,
                                               mlm_prob=args.mlm_prob,
-                                              elm_prob=args.elm_prob)
+                                              elm_prob=args.elm_prob,
+                                              strategy=args.strategy)
         eval_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(eval_dataset))
         eval_data = mslm_dataset.mslmDataset(eval_dataset_dict)
         eval_dataloader = DataLoader(eval_data, batch_size=args.per_device_eval_batch_size)
@@ -673,7 +683,8 @@ def main():
                                                   custom_mask=True,
                                                   random_mask=args.random_mask,
                                                   mlm_prob=args.mlm_prob,
-                                                  elm_prob=args.elm_prob)
+                                                  elm_prob=args.elm_prob,
+                                                  strategy=args.strategy)
             test_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(test_dataset))
             test_data = mslm_dataset.mslmDataset(test_dataset_dict)
             test_dataloader = DataLoader(test_data, batch_size=args.per_device_eval_batch_size)
@@ -876,6 +887,8 @@ def main():
                 outputs = model(batch, labels, train_weights[step], weight_matrix)
                 loss = outputs.loss
             else:
+                if args.strategy:
+                    batch = utils.batch_input_creation(batch)
                 outputs = model(**batch)
                 loss = outputs.loss
 
@@ -912,6 +925,7 @@ def main():
                     outputs = model(batch, labels, eval_weights[step], weight_matrix)
                     loss = outputs.loss
                 else:
+                    batch = utils.batch_input_creation(batch) if args.strategy else batch
                     outputs = model(**batch)
                     loss = outputs.loss
 
@@ -994,6 +1008,7 @@ def main():
                     batch = {k: v for k, v in batch.items() if k != 'labels'}
                     outputs = model(batch, labels, te_weights[step], weight_matrix, train=False)
                 else:
+                    batch = utils.batch_input_creation(batch) if args.strategy else batch
                     outputs = model(**batch)
 
             predictions = outputs.logits.argmax(dim=-1)
