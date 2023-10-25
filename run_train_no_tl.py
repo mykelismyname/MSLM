@@ -61,7 +61,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import seaborn as sns
 import torch.nn as nn
-from mslm.masking import custom_mask
+from mslm.masking import custom_mask, pmi_masking
 from mslm.models import joint_model, mslm_model, detection
 from mslm import utils, mslm_dataset
 from mslm.loss import MslmLoss, DetectionLoss
@@ -616,14 +616,18 @@ def main():
         tokenized_inputs["labels"] = labels
         return tokenized_inputs
     print(raw_datasets)
+    # if args.strategy.lower() == 'pmi':
+    #     pmi_masking.construct_pmi_masking_vocabulary(raw_datasets, tokenizer, args.output_dir)
+
     with accelerator.main_process_first():
         processed_raw_datasets = raw_datasets.map(
             tokenize_and_align_labels,
             batched=True,
-            remove_columns=['text', "tokens", "ner_tags"] if args.entity_masking else raw_datasets["train"].column_names,
+            remove_columns=["text", "tokens", "ner_tags"] if args.entity_masking else raw_datasets["train"].column_names,
             desc="Running tokenizer on dataset",
         )
     print(processed_raw_datasets)
+
     train_dataset = processed_raw_datasets["train"]
     eval_dataset = processed_raw_datasets["validation"]
     if "test" in raw_datasets:
@@ -651,7 +655,7 @@ def main():
 
     # DataLoaders creation:
     if args.entity_masking or args.strategy:
-        print(f"\nSTRATEGY======================================================{args.strategy}\n")
+        print(f"\nSTRATEGY - {args.strategy}\n")
         train_dataset = custom_mask.customMask(train_dataset,
                                                tokenizer=tokenizer,
                                                labels_mapping=model.config.id2label,
@@ -659,6 +663,7 @@ def main():
                                                random_mask=args.random_mask,
                                                mlm_prob=args.mlm_prob,
                                                elm_prob=args.elm_prob,
+                                               data_dir=args.output_dir,
                                                strategy=args.strategy)
         train_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(train_dataset))
         train_data = mslm_dataset.mslmDataset(train_dataset_dict)
@@ -671,6 +676,7 @@ def main():
                                               random_mask=args.random_mask,
                                               mlm_prob=args.mlm_prob,
                                               elm_prob=args.elm_prob,
+                                              data_dir=args.output_dir,
                                               strategy=args.strategy)
         eval_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(eval_dataset))
         eval_data = mslm_dataset.mslmDataset(eval_dataset_dict)
@@ -684,6 +690,7 @@ def main():
                                                   random_mask=args.random_mask,
                                                   mlm_prob=args.mlm_prob,
                                                   elm_prob=args.elm_prob,
+                                                  data_dir=args.output_dir,
                                                   strategy=args.strategy)
             test_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(test_dataset))
             test_data = mslm_dataset.mslmDataset(test_dataset_dict)
