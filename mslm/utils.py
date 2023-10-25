@@ -186,8 +186,8 @@ def create_structured_data(data_dir, labels_file):
         os.makedirs(output_dir)
     patient_dataset_df.to_csv(os.path.join(output_dir, 'patient_data.csv'))
 
-# check whether a sequence of ids is a subset of a larger sequence of ids
-def isSubArray(A, B, n, m):
+# check whether a sequence of ids B is a subset of a larger sequence of ids A
+def isSubArray(A, B, n, m, return_last_index=False):
     i = 0
     j = 0
     while (i < n and j < m):
@@ -195,13 +195,17 @@ def isSubArray(A, B, n, m):
             i += 1
             j += 1
             if (j == m):
+                if return_last_index:
+                    return True, (i-m, i)
                 return True
         else:
             i = i - j + 1
             j = 0
+    if return_last_index:
+        return False, None
     return False
 
-#check if span or sequence is a sub-span or subsequence of a large span or sequence respectively
+#check if span or sequence s is a sub-span or subsequence of a large span or sequence t respectively
 def isSubsequence(s: str, t: str) -> bool:
     i, j = 0, 0
     while i < len(s) and j < len(t):
