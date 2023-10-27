@@ -5,7 +5,7 @@ import os
 from nltk import *
 from nltk.collocations import *
 import sys
-sys.path.append("../")
+sys.path.append("../../")
 from mslm import utils
 import heapq
 from transformers import AutoTokenizer
@@ -148,7 +148,7 @@ def construct_pmi_masking_vocabulary(corpus, tokenizer, dataset_name, min_freq):
             if len(entry) == 4 and entry not in collocations_lists["quad"]:
                 heapq.heappush(collocations_lists["quad"], entry)
 
-    output_dir = "../mslm/masking/pmi_masking_vocabularly"
+    output_dir = "pmi_masking_vocabularly_"
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     # output_file = os.path.basename(os.path.dirname(dataset_name))

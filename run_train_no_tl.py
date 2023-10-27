@@ -664,6 +664,8 @@ def main():
                                                mlm_prob=args.mlm_prob,
                                                elm_prob=args.elm_prob,
                                                data_dir=args.output_dir,
+                                               split="train",
+                                               output_dir=args.output_dir,
                                                strategy=args.strategy)
         train_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(train_dataset))
         train_data = mslm_dataset.mslmDataset(train_dataset_dict)
@@ -677,6 +679,8 @@ def main():
                                               mlm_prob=args.mlm_prob,
                                               elm_prob=args.elm_prob,
                                               data_dir=args.output_dir,
+                                              split="val",
+                                              output_dir=args.output_dir,
                                               strategy=args.strategy)
         eval_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(eval_dataset))
         eval_data = mslm_dataset.mslmDataset(eval_dataset_dict)
@@ -691,6 +695,8 @@ def main():
                                                   mlm_prob=args.mlm_prob,
                                                   elm_prob=args.elm_prob,
                                                   data_dir=args.output_dir,
+                                                  split="test",
+                                                  output_dir=args.output_dir,
                                                   strategy=args.strategy)
             test_dataset_dict = transformers.BatchEncoding(Dataset.to_dict(test_dataset))
             test_data = mslm_dataset.mslmDataset(test_dataset_dict)
