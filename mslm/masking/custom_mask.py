@@ -14,17 +14,20 @@ import random
 import nltk
 from nltk import *
 from nltk.collocations import *
+import time
+import numpy as np
 '''
     Masking specific tokens of the input dataset
 '''
 
-def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_mask, mlm_prob, elm_prob, data_dir, strategy=None):
+def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_mask, mlm_prob, elm_prob, data_dir, split, output_dir, strategy=None):
     print("Label mapping: ", labels_mapping, '\nMask token Id: ', tokenizer.mask_token_id)
 
     if custom_mask:
         print('\n--------------------------------------CUSTOM MASKING STARTS--------------------------------------\n')
         masked_input_ids, entity_mask_ids, non_entity_mask_ids  = [], [], []
         total_number_of_tokenized_ids = 0
+
         for i, j in enumerate(tokenized_input):
             seq_ids, entity_masked_indices, masked_seq_ids, = j['input_ids'], [], []
             total_number_of_tokenized_ids += len(seq_ids)
@@ -84,6 +87,19 @@ def customMask(tokenized_input, tokenizer, labels_mapping, custom_mask, random_m
                 entity_mask_ids.append(entity_masked_indices_)
                 non_entity_mask_ids.append(non_entity_masked_indices_)
 
+        output_dir = "mslm/masking/saved_masked_ids/"+os.path.basename(os.path.dirname(output_dir))
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        with open(os.path.join(output_dir, f"masked_input_ids_{split}.npy"), "wb") as f,\
+             open(os.path.join(output_dir, f"entity_mask_ids_{split}.npy"), "wb") as g,\
+             open(os.path.join(output_dir, f"non_entity_mask_ids_{split}.npy"), "wb") as h:
+            np.save(f, np.array(masked_input_ids))
+            np.save(g, np.array(entity_mask_ids))
+            np.save(h, np.array(non_entity_mask_ids))
+            f.close()
+            g.close()
+            h.close()
         # tokenized_input_masked = tokenized_input.remove_columns('input_ids')
         tokenized_input = tokenized_input.add_column(name='masked_input_ids', column=masked_input_ids)
         tokenized_input = tokenized_input.add_column(name='entity_specific_mask_ids', column=entity_mask_ids)
@@ -253,45 +269,38 @@ def pmi_masking(input_ids, tokenizer, masking_rate, mask_vocab_dir):
     masking_vocab_dir = os.path.basename(os.path.dirname(mask_vocab_dir))
     masking_vocab_file = os.path.join(vocab_dir, "{}.txt".format(masking_vocab_dir))
 
-    non_masked_ids = [(i,j) for i,j in enumerate(input_ids) if j not in tokenizer.all_special_ids]
+    non_masked_ids = [i for i in input_ids if i not in tokenizer.all_special_ids]
 
     masking_budget = math.ceil(masking_rate * len(non_masked_ids))
     masked_so_far = 0
     span_ids_masked = []
-    # print("Masking budget", masking_budget)
-    # print(input_ids)
+
     with open(masking_vocab_file, 'r') as vocab:
         vocab_collocations = vocab.readlines()
         track_collocations = 0
         # while masked_so_far < masking_budget and track_collocations < len(vocab_collocations):
         for collo_gram in vocab_collocations:
             collo_gram = collo_gram.strip()
-            # print(collo_gram)
             collo_gram_tokenized = tokenizer.tokenize(collo_gram)
             collo_gram_tokenized_ids = tokenizer.convert_tokens_to_ids(collo_gram_tokenized)
             if utils.isSubsequence(collo_gram_tokenized_ids, input_ids):
-                # print("--------", collo_gram, collo_gram_tokenized, collo_gram_tokenized_ids)
                 for g in collo_gram.split():
                     g_sub_array = tokenizer.tokenize(g)
                     g_sub_array_ids = tokenizer.convert_tokens_to_ids(g_sub_array)
                     n, m = len(input_ids), len(g_sub_array_ids)
                     subarray_check = utils.isSubArray(input_ids, g_sub_array_ids, n, m, return_last_index=True)
                     g_sub_array_len = len(g_sub_array)
-                    # print(subarray_check)
                     if subarray_check[0]:
                         start, end = subarray_check[1]
                         assert g_sub_array_len == (end - start)
                         if (masked_so_far+g_sub_array_len) > masking_budget:
                             g_sub_array_len = masking_budget - masked_so_far
                             end = start+g_sub_array_len
-                        print("----Sub span found----", start, end, tokenizer.convert_ids_to_tokens(input_ids[start:end]), [tokenizer.mask_token_id]*g_sub_array_len)
+                        # print("----Sub span found----", start, end, tokenizer.convert_ids_to_tokens(input_ids[start:end]), [tokenizer.mask_token_id]*g_sub_array_len)
                         input_ids[start:end] = [tokenizer.mask_token_id]*g_sub_array_len
                         masked_so_far += g_sub_array_len
                         span_ids_masked += list(zip(range(start, end), input_ids[start:end]))
             track_collocations += 1
             if masked_so_far >= masking_budget:
                 break
-    # print("------------")
-    # print(input_ids)
-    # print("=========================================================================================================\n")
     return input_ids, span_ids_masked
