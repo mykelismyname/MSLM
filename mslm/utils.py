@@ -485,3 +485,8 @@ if __name__ == "__main__":
     #                     if l[1] not in labels:
     #                         labels.append(l[1].strip())
     # print(labels)
+    # with open('masking/saved_masked_ids/BC5CDR-disease/masked_input_ids_train.npy','rb') as d:
+    #     a = np.load(d)
+    #     print(len(a))
+    #     for i in a:
+    #         print(i)
