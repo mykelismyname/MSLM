@@ -381,7 +381,6 @@ def compute_sentence_length(data_dir):
             sentence_counter = 0
             for i,line in enumerate(data):
                 if line == '\n':
-                    print(line, "\n")
                     length = len(tokens)
                     sent_lengths.append(length)
                     if length > max_length:
