@@ -381,6 +381,7 @@ def compute_sentence_length(data_dir):
             sentence_counter = 0
             for i,line in enumerate(data):
                 if line == '\n':
+                    print(line, "\n")
                     length = len(tokens)
                     sent_lengths.append(length)
                     if length > max_length:
@@ -485,3 +486,8 @@ if __name__ == "__main__":
     #                     if l[1] not in labels:
     #                         labels.append(l[1].strip())
     # print(labels)
+    # with open('masking/saved_masked_ids/BC5CDR-disease/masked_input_ids_train.npy','rb') as d:
+    #     a = np.load(d)
+    #     print(len(a))
+    #     for i in a:
+    #         print(i)
