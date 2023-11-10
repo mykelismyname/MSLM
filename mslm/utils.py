@@ -407,8 +407,9 @@ def compute_sentence_length(data_dir):
                     labels.clear()
                 elif line != " ":
                     line = line.split()
-                    tokens.append(line[0])
-                    labels.append(line[1])
+                    if len(line) == 2:
+                        tokens.append(line[0])
+                        labels.append(line[1])
                 else:
                     print("Line-", line)
             print(f"{data_file} has {sentence_counter} sentences and the  longest sentence is {max_length} words long"
@@ -443,6 +444,99 @@ def plot_metrics(result_dirs, metric):
     plt.xlabel("epochs")
     plt.ylabel(metric)
     plt.savefig(os.path.join(res_dirs_path, "{}.png".format(metric)))
+    plt.show()
+
+def plot_metrics_2_(result_dirs, metric, datasets, models):
+    res_dirs = os.listdir(result_dirs)
+    res_dirs_path = os.path.abspath(result_dirs)
+    datasets = [i.lower() for i in datasets.split()]
+    if metric in ["loss", "perplexity"]:
+        legend_loc = "upper right"
+    else:
+        legend_loc = "lower right"
+
+    models = models.split()
+    fig, ax = plt.subplots(1,4, figsize=(21,5))
+
+    fig.tight_layout(pad=2)
+
+    dir_name, _dirs_ = [], {}
+    for d in res_dirs:
+        if d.lower() in datasets:
+            if d not in dir_name:
+                dir_name.append(d)
+            d_ = os.path.join(res_dirs_path, d)
+            _dirs_[d.lower()] = []
+            for m in models:
+                if m.lower() == 'biobert' and d.lower() in ['bc2gm', 'bc5cdr-chem']:
+                    _dirs_[d.lower()].append(d_+"/"+m+"_256")
+                    _dirs_[d.lower()].append(d_+"/"+m+"_256_ELM_0.5_BLM_0.0_MES_100")
+                if m.lower() == 'pubmedbert' and d.lower() in ['jnlpba', 'ncbi-disease']:
+                    _dirs_[d.lower()].append(d_+"/"+m+"_256")
+                    _dirs_[d.lower()].append(d_+"/"+m+"_256_ELM_0.5_BLM_0.0_MES_100")
+                if m not in dir_name:
+                    dir_name.append(m)
+
+
+    _dirs_ = [(k,v) for k,v in _dirs_.items()]
+    for i, ax in zip(range(len(_dirs_)), ax.flat):
+        dataset, files = _dirs_[i]
+        best_scores = {}
+        for d_loc in files:
+            label_name = os.path.basename(d_loc)
+            if label_name.__contains__('ELM'):
+                l = label_name.split("_")[0]
+                label_name = dataset + "_MSLM_" + l
+            else:
+                l = label_name.split("_")[0]
+                label_name = dataset + "_" + l
+
+            x = json.load(open(d_loc + "/tracked_metrics.json", 'r'))
+            all_f1_scores = [round(i*100, 4) for i in x[metric]]
+            x_values = [i + 1 for i in range(len(all_f1_scores))]
+            ax.plot(x_values, all_f1_scores, label=label_name, marker='.')
+            ax.legend(loc=legend_loc, fontsize=12.5)
+            f1_scores = [(i + 1, j) for i, j in enumerate(all_f1_scores)]
+            f1_scores_sorted = sorted(f1_scores, key=lambda x: x[1])
+            epoch, best_f1 = f1_scores_sorted[-1]
+            if label_name.__contains__('MSLM'):
+                best_scores["MSLM"] = (epoch, best_f1)
+                print("MSLM", all_f1_scores)
+            else:
+                best_scores["vanilla"] = (epoch, best_f1)
+                print("Vanilla", all_f1_scores)
+
+            if label_name.__contains__('MSLM'):
+                diff = [abs(i - best_scores['vanilla'][1]) for i in all_f1_scores]
+                intersecting_score = min(diff)
+                epoch = diff.index(intersecting_score)
+                print("at", all_f1_scores)
+                best_f1 = all_f1_scores[epoch]
+                ax.scatter(epoch + 1, best_f1, color='red', marker='*')
+                my_y_max = (best_f1 - ax.get_ylim()[0]) / (ax.get_ylim()[1] - ax.get_ylim()[0])
+                my_x_max = (epoch + 1 - ax.get_xlim()[0]) / (ax.get_xlim()[1] - ax.get_xlim()[0])
+                print(diff, intersecting_score)
+                print("here", best_scores)
+                print("Best:", best_f1, epoch)
+                ax.axhline(y=best_f1, xmin=1, xmax=my_x_max, clip_on=False, color='blue', linewidth=1,
+                           linestyle="dashdot")
+                ax.axvline(x=epoch + 1, ymin=0, ymax=my_y_max, clip_on=False, color='blue', linewidth=1,
+                           linestyle="dashdot")
+                ax.spines[['right', 'top']].set_visible(False)
+                ax.spines['bottom'].set_color('#000000')
+                ax.spines['right'].set_color('#000000')
+                ax.spines['bottom'].set_linewidth(1.5)
+                # ax.spines['right'].set_linewidth(1.5)
+                ax.tick_params(colors='black')
+                ax.tick_params(axis='both', which='both', width=2)
+                ax.tick_params(axis='both', which='both', labelsize=12)
+
+        ax.set_title(dataset, fontsize=14, fontweight='bold')
+        ax.set_xlabel("epochs", fontsize=12)
+        ax.set_ylabel(metric, fontsize=12)
+
+    dir_name = "_".join([i for i in dir_name])
+    plt.savefig(os.path.join(res_dirs_path, "{}_{}.png".format(dir_name, metric)))
     plt.show()
 
 def main():
