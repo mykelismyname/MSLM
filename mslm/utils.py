@@ -407,9 +407,8 @@ def compute_sentence_length(data_dir):
                     labels.clear()
                 elif line != " ":
                     line = line.split()
-                    if len(line) == 2:
-                        tokens.append(line[0])
-                        labels.append(line[1])
+                    tokens.append(line[0])
+                    labels.append(line[1])
                 else:
                     print("Line-", line)
             print(f"{data_file} has {sentence_counter} sentences and the  longest sentence is {max_length} words long"
@@ -446,98 +445,77 @@ def plot_metrics(result_dirs, metric):
     plt.savefig(os.path.join(res_dirs_path, "{}.png".format(metric)))
     plt.show()
 
-def plot_metrics_2_(result_dirs, metric, datasets, models):
-    res_dirs = os.listdir(result_dirs)
-    res_dirs_path = os.path.abspath(result_dirs)
-    datasets = [i.lower() for i in datasets.split()]
-    if metric in ["loss", "perplexity"]:
-        legend_loc = "upper right"
-    else:
-        legend_loc = "lower right"
+#find overlaps between PMI and DS-terms
+# extract an outcome based on the label
+def finding_overlaps(data_folder, pmi_vocab):
+    def extract_vocab(pmi_vocab):
+        vocab = []
+        with open(pmi_vocab, 'r') as pmi:
+            for i,f in enumerate(pmi.readlines()):
+                f = f.strip()
+                if f not in vocab:
+                    vocab.append(f)
+        return vocab
 
-    models = models.split()
-    fig, ax = plt.subplots(1,4, figsize=(21,5))
+    def identify_entity_using_labels(seq, seq_labels):
+        x_split, y_split = seq, seq_labels
+        sentence_entities = []
+        if len(x_split) == len(y_split):
+            e = 0
+            for m in range(len(x_split)):
+                if m == e:
+                    entity, entity_label = '', ''
+                    if y_split[m].strip().startswith('B'):
+                        entity += x_split[m].strip()
+                        entity_label += y_split[m].strip()
+                        e += 1
+                        for w in range(m + 1, len(x_split)):
+                            if y_split[w].startswith('I'):
+                                entity += ' ' + x_split[w].strip()
+                                entity_label += ' ' + y_split[w].strip()
+                                e += 1
+                            else:
+                                break
+                        sentence_entities.append((entity, entity_label))
+                    else:
+                        e += 1
+        return sentence_entities
 
-    fig.tight_layout(pad=2)
+    overlapping_phrases = []
+    vocab = extract_vocab(pmi_vocab)
+    print("============================Finished extracting vocabularly============================", len(vocab))
 
-    dir_name, _dirs_ = [], {}
-    for d in res_dirs:
-        if d.lower() in datasets:
-            if d not in dir_name:
-                dir_name.append(d)
-            d_ = os.path.join(res_dirs_path, d)
-            _dirs_[d.lower()] = []
-            for m in models:
-                if m.lower() == 'biobert' and d.lower() in ['bc2gm', 'bc5cdr-chem']:
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256")
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256_ELM_0.5_BLM_0.0_MES_100")
-                if m.lower() == 'pubmedbert' and d.lower() in ['jnlpba', 'ncbi-disease']:
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256")
-                    _dirs_[d.lower()].append(d_+"/"+m+"_256_ELM_0.5_BLM_0.0_MES_100")
-                if m not in dir_name:
-                    dir_name.append(m)
+    with open(os.path.dirname(pmi_vocab) + '/overlapping_phrases.txt', 'w') as op:
+        for file_path in glob(data_folder+'/*.txt'):
+            if os.path.basename(file_path) in ["train.txt"]:
+                print(file_path)
+                with open(file_path, "r") as f:
+                    tokens, labels = [], []
+                    for line in f.readlines():
+                        if line == "\n":
+                            entities = identify_entity_using_labels(seq=tokens, seq_labels=labels)
+                            found_and_removed = []
+                            for e in entities:
+                                if e[0] in vocab:
+                                    if e[0] not in overlapping_phrases:
+                                        print(e[0])
+                                        op.write("{}\n".format(e[0]))
+                                        overlapping_phrases.append(e[0])
+                                        found_and_removed.append(e[0])
+                            found_and_removed = list(set(found_and_removed))
+                            for v in found_and_removed:
+                                vocab.remove(v)
+                        else:
+                            line = line.strip()
+                            token, label = line.split()
+                            tokens.append(token)
+                            labels.append(label)
 
+        overlap_percent = float(len(overlapping_phrases)/len(vocab) * 100)
+        op.write(f"Overlapping percentage - {overlap_percent}")
+        op.close()
 
-    _dirs_ = [(k,v) for k,v in _dirs_.items()]
-    for i, ax in zip(range(len(_dirs_)), ax.flat):
-        dataset, files = _dirs_[i]
-        best_scores = {}
-        for d_loc in files:
-            label_name = os.path.basename(d_loc)
-            if label_name.__contains__('ELM'):
-                l = label_name.split("_")[0]
-                label_name = dataset + "_MSLM_" + l
-            else:
-                l = label_name.split("_")[0]
-                label_name = dataset + "_" + l
-
-            x = json.load(open(d_loc + "/tracked_metrics.json", 'r'))
-            all_f1_scores = [round(i*100, 4) for i in x[metric]]
-            x_values = [i + 1 for i in range(len(all_f1_scores))]
-            ax.plot(x_values, all_f1_scores, label=label_name, marker='.')
-            ax.legend(loc=legend_loc, fontsize=12.5)
-            f1_scores = [(i + 1, j) for i, j in enumerate(all_f1_scores)]
-            f1_scores_sorted = sorted(f1_scores, key=lambda x: x[1])
-            epoch, best_f1 = f1_scores_sorted[-1]
-            if label_name.__contains__('MSLM'):
-                best_scores["MSLM"] = (epoch, best_f1)
-                print("MSLM", all_f1_scores)
-            else:
-                best_scores["vanilla"] = (epoch, best_f1)
-                print("Vanilla", all_f1_scores)
-
-            if label_name.__contains__('MSLM'):
-                diff = [abs(i - best_scores['vanilla'][1]) for i in all_f1_scores]
-                intersecting_score = min(diff)
-                epoch = diff.index(intersecting_score)
-                print("at", all_f1_scores)
-                best_f1 = all_f1_scores[epoch]
-                ax.scatter(epoch + 1, best_f1, color='red', marker='*')
-                my_y_max = (best_f1 - ax.get_ylim()[0]) / (ax.get_ylim()[1] - ax.get_ylim()[0])
-                my_x_max = (epoch + 1 - ax.get_xlim()[0]) / (ax.get_xlim()[1] - ax.get_xlim()[0])
-                print(diff, intersecting_score)
-                print("here", best_scores)
-                print("Best:", best_f1, epoch)
-                ax.axhline(y=best_f1, xmin=1, xmax=my_x_max, clip_on=False, color='blue', linewidth=1,
-                           linestyle="dashdot")
-                ax.axvline(x=epoch + 1, ymin=0, ymax=my_y_max, clip_on=False, color='blue', linewidth=1,
-                           linestyle="dashdot")
-                ax.spines[['right', 'top']].set_visible(False)
-                ax.spines['bottom'].set_color('#000000')
-                ax.spines['right'].set_color('#000000')
-                ax.spines['bottom'].set_linewidth(1.5)
-                # ax.spines['right'].set_linewidth(1.5)
-                ax.tick_params(colors='black')
-                ax.tick_params(axis='both', which='both', width=2)
-                ax.tick_params(axis='both', which='both', labelsize=12)
-
-        ax.set_title(dataset, fontsize=14, fontweight='bold')
-        ax.set_xlabel("epochs", fontsize=12)
-        ax.set_ylabel(metric, fontsize=12)
-
-    dir_name = "_".join([i for i in dir_name])
-    plt.savefig(os.path.join(res_dirs_path, "{}_{}.png".format(dir_name, metric)))
-    plt.show()
+    return overlapping_phrases
 
 def main():
     task = input("What do you want, create_ner_dataset or create_ner_labels or create_structured_dataset ?\n")
@@ -559,14 +537,17 @@ def main():
     if task == "compute_max_length":
         source = input("Enter the dataset dir or file path ?\n")
         compute_sentence_length(source)
+
 if __name__ == "__main__":
     # main()
     import sys
     args = sys.argv
     print(args)
-    compute_sentence_length(args[1])
+
+    create_ner_datasets(data_dir=args[1], dest_dir=args[2])
+    # compute_sentence_length(args[1])
     # plot_metrics(args[1], args[2])
-    # create_ner_datasets(data_dir=args[1], dest_dir=args[2])
+    # finding_overlaps(data_folder=args[1], pmi_vocab=args[2])
     # p = os.path.abspath(args[1])
     # labels = []
     # for t in os.listdir(p):
@@ -579,8 +560,41 @@ if __name__ == "__main__":
     #                     if l[1] not in labels:
     #                         labels.append(l[1].strip())
     # print(labels)
-    # with open('masking/saved_masked_ids/BC5CDR-disease/masked_input_ids_train.npy','rb') as d:
+    # with open('masking/saved_masked_ids/BC2GM/masked_input_ids_train.npy','rb') as d:
     #     a = np.load(d)
     #     print(len(a))
     #     for i in a:
-    #         print(i)
+    #         print(i.tolist())
+    #         break
+    #
+    # o = 1
+    # with open(args[1], 'r') as p, open(args[2], 'r') as q, open(args[3], 'w') as r:
+    #     overlapped_words = q.readlines()
+    #     d = np.random.permutation(4)
+    #     f = 0
+    #     track = 0
+    #     plotted = 0
+    #     found = []
+    #     print(d)
+    #     for i, x in enumerate(p.readlines()):
+    #         if track in range(d[f]):
+    #             r.write(f"{x} \\\\ \n")
+    #             track += 1
+    #             print(i, x)
+    #         else:
+    #             # if overlapped_words[plotted].strip() not in found:
+    #             r.write(f"\\textbf{{\\textcolor{{blue}}{{{overlapped_words[plotted].strip()}}}}} \\\\ \n")
+    #             found.append(overlapped_words[plotted].strip())
+    #             track = 0
+    #             print(i, "here", overlapped_words[plotted])
+    #             plotted += 1
+    #             f += 1
+    #         if f == len(d):
+    #             f = 0
+    #
+    #         if len(found) == 150:
+    #             break
+    #
+    #
+    #
+    #
