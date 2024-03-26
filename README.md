@@ -27,9 +27,9 @@ Alternatively inherit pre-processed BLURB datasets such as,
 #### Our proposed Joint ELM-BLM masking approach
 <img src="mslm_masking.png">
 
-#### PMI masking
+#### [PMI](https://github.com/AI21Labs/pmi-masking) masking
 ```
-Construct a vocabularly from a dataset using the [PMI](https://github.com/AI21Labs/pmi-masking) masking approach 
+Construct a vocabularly from a dataset using the masking approach 
 
  ./run_pmi.sh
 ```
