@@ -1,7 +1,7 @@
 #  <p align=center>`MSLM`</p>
 
 #### Domain Sensitive Fine-tuning: 
-Improving PLM sensitivity via Mask Specific Loss 
+Improving Pre-trained Language Model Sensitivity via Mask Specific losses: A case study on Biomedical NER
 
 ## Requirements
 
@@ -27,9 +27,9 @@ Alternatively inherit pre-processed BLURB datasets such as,
 #### Our proposed Joint ELM-BLM masking approach
 <img src="mslm_masking.png">
 
-#### PMI masking
+#### [PMI](https://github.com/AI21Labs/pmi-masking) masking
 ```
-Construct a vocabularly from a dataset using the [PMI](https://github.com/AI21Labs/pmi-masking) masking approach 
+Construct a vocabularly from a dataset using the masking approach 
 
  ./run_pmi.sh
 ```
@@ -43,5 +43,10 @@ Specify the paths to the data and set the masking budgets for both the Base leve
 ```
 
 ## Citation
-
-> Coming soon (NAACL 2024)
+```
+@article{abaho2024improving,
+  title={Improving Pre-trained Language Model Sensitivity via Mask Specific losses: A case study on Biomedical NER},
+  author={Abaho, Micheal and Bollegala, Danushka and Leeming, Gary and Joyce, Dan and Buchan, Iain E},
+  journal={arXiv preprint arXiv:2403.18025},
+  year={2024}
+}
