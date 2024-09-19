@@ -1,7 +1,7 @@
 #  <p align=center>`MSLM`</p>
 
 #### Domain Sensitive Fine-tuning: 
-Improving PLM sensitivity via Mask Specific Loss 
+Improving Pre-trained Language Model Sensitivity via Mask Specific losses: A case study on Biomedical NER
 
 ## Requirements
 
@@ -43,5 +43,10 @@ Specify the paths to the data and set the masking budgets for both the Base leve
 ```
 
 ## Citation
-
-> Coming soon (NAACL 2024)
+```
+@article{abaho2024improving,
+  title={Improving Pre-trained Language Model Sensitivity via Mask Specific losses: A case study on Biomedical NER},
+  author={Abaho, Micheal and Bollegala, Danushka and Leeming, Gary and Joyce, Dan and Buchan, Iain E},
+  journal={arXiv preprint arXiv:2403.18025},
+  year={2024}
+}
