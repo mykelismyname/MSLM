@@ -539,12 +539,12 @@ def main():
         compute_sentence_length(source)
 
 if __name__ == "__main__":
-    # main()
-    import sys
-    args = sys.argv
-    print(args)
+    main()
+    # import sys
+    # args = sys.argv
+    # print(args)
 
-    create_ner_datasets(data_dir=args[1], dest_dir=args[2])
+    # create_ner_datasets(data_dir=args[1], dest_dir=args[2])
     # compute_sentence_length(args[1])
     # plot_metrics(args[1], args[2])
     # finding_overlaps(data_folder=args[1], pmi_vocab=args[2])

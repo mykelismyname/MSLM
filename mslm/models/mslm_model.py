@@ -11,6 +11,6 @@ class MslmModel(nn.Module):
                                                                          'non_entity_specific_mask_ids',
                                                                          'input_ids']}
         batch_input['input_ids'] = batch_input.pop('masked_input_ids')
-        output = self.model(**batch_input, output_hidden_states=True)
+        output = self.model(**batch_input, output_hidden_states=True, output_attentions=True)
         return output
 
